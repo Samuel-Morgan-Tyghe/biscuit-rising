@@ -3,77 +3,80 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="A 3D British snack-aisle platformer with gift-powered chaos for TikTok LIVE.">
-  <meta name="theme-color" content="#181123">
-  <title>Biscuit Rising</title>
+  <meta name="description" content="A solo third-person climb through abandoned skyworks, with optional TikFinity gift effects.">
+  <meta name="theme-color" content="#0d141e">
+  <title>Skybreak</title>
   <link rel="stylesheet" href="./style.css">
   <script type="module" src="./main.mjs"></script>
 </head>
 <body>
   <header class="mast">
-    <a class="wordmark" href="./"><span class="stamp" aria-hidden="true">◈</span> Biscuit Rising</a>
-    <nav aria-label="Game"><a href="#setup">TikFinity setup <span aria-hidden="true">↗</span></a></nav>
+    <h1><a class="wordmark" href="./"><span class="stamp" aria-hidden="true">◈</span> Skybreak</a></h1>
+    <nav aria-label="Game">
+      <a href="#gift-controls">Gift controls</a>
+      <a href="#setup">TikFinity setup <span aria-hidden="true">↗</span></a>
+    </nav>
   </header>
   <main>
-    <div class="intro">
-      <h1>Biscuit <em>Rising</em></h1>
-      <p>Climb a 3D stack of biscuits, fizzy pop and rail chaos. Your TikTok LIVE viewers can make a right mess of it.</p>
-    </div>
-    <div class="layout">
-      <section class="game-shell" aria-label="Biscuit Rising game">
-        <div class="scoreboard">
-          <div><small>Section</small><strong id="zone">Biscuit tin</strong></div>
+    <section class="game-shell" aria-label="Skybreak game">
+      <div class="scoreboard">
+        <div class="progress">
+          <div><small>Section</small><strong id="zone">Quarry entrance</strong></div>
           <div class="height"><small>Best height</small><strong id="altitude">0 m</strong></div>
+        </div>
+        <div class="game-actions">
+          <button class="quiet" id="align-camera" type="button" title="Face next ledge (R)">Face route</button>
           <button class="quiet" id="restart" type="button">Restart</button>
           <button class="quiet" id="fullscreen" type="button" hidden>Full screen</button>
         </div>
-        <div class="stage">
-          <canvas id="game" tabindex="0" aria-label="3D platformer. Use WASD or the arrow keys to move in any direction. Press Space to jump. Aim for the ring on the next ledge."></canvas>
-          <div class="finish graphics-error" id="graphics-error" role="alert" hidden>
-            <h2>3D graphics unavailable</h2>
-            <p>Open the game in a browser with WebGL 2 and hardware acceleration, then reload.</p>
-          </div>
-          <div class="notice" id="notice" aria-live="polite" hidden></div>
-          <div class="finish" id="finish" hidden>
-            <span aria-hidden="true">🏁</span>
-            <h2>Top biscuit</h2>
-            <p>You reached the summit flag.</p>
-            <button class="primary" id="again" type="button">Play again</button>
-          </div>
+      </div>
+      <div class="stage">
+        <canvas id="game" tabindex="0" aria-label="Solo 3D platformer. Use WASD or the arrow keys to move, Space to jump, and Q and E or drag to look around. Press R to face the next ledge."></canvas>
+        <div class="finish graphics-error" id="graphics-error" role="alert" hidden>
+          <h2>3D graphics unavailable</h2>
+          <p>Open the game in a browser with WebGL 2 and hardware acceleration, then reload.</p>
         </div>
-        <div class="controls" aria-label="Game controls">
-          <div class="direction-pad">
-            <button data-control="left" type="button" aria-label="Move left">←</button>
-            <button data-control="back" type="button" aria-label="Move forward">↑</button>
-            <button data-control="front" type="button" aria-label="Move backward">↓</button>
-            <button data-control="right" type="button" aria-label="Move right">→</button>
-          </div>
-          <span>WASD or arrows to move, Space to jump</span>
-          <button data-control="jump" type="button">Jump</button>
+        <div class="notice" id="notice" aria-live="polite" hidden></div>
+        <div class="finish" id="finish" hidden>
+          <span aria-hidden="true">◈</span>
+          <h2>Summit reached</h2>
+          <p>You climbed all the way to the flag.</p>
+          <button class="primary" id="again" type="button">Play again</button>
         </div>
+      </div>
+      <div class="controls" aria-label="Game controls">
+        <div class="direction-pad">
+          <button data-control="left" type="button" aria-label="Move left">←</button>
+          <button data-control="back" type="button" aria-label="Move forward">↑</button>
+          <button data-control="front" type="button" aria-label="Move backward">↓</button>
+          <button data-control="right" type="button" aria-label="Move right">→</button>
+        </div>
+        <p class="keyboard-help"><kbd>WASD</kbd><span>Move</span><kbd>Space</kbd><span>Jump</span><kbd>Q / E</kbd><span>Look or drag</span></p>
+        <p class="touch-help">Drag to look</p>
+        <button data-control="jump" type="button">Jump</button>
+      </div>
+    </section>
+    <aside class="side" id="gift-controls" aria-label="TikFinity controls">
+      <section class="panel connection">
+        <div><h2>TikFinity</h2><p id="connection" role="status" data-state="offline">Demo mode</p></div>
+        <button class="primary" id="connect" type="button">Connect</button>
       </section>
-      <aside class="side" aria-label="TikFinity controls">
-        <section class="panel connection">
-          <div><h2>TikFinity</h2><p id="connection" role="status" data-state="offline">Demo mode</p></div>
-          <button class="primary" id="connect" type="button">Connect</button>
-        </section>
-        <section class="panel gifts">
-          <h2>Gift chaos</h2>
-          <p>Test any effect for free while you climb.</p>
-          <div id="effects"></div>
-          <p id="last-gift" role="status">Waiting for a gift or test.</p>
-        </section>
-        <details class="panel mappings">
-          <summary>Change gift mappings</summary>
-          <p>Enter the gift names exactly as TikFinity reports them. A blank field disables the live trigger for that effect.</p>
-          <form id="mappings">
-            <div id="mapping-fields"></div>
-            <button class="primary" type="submit">Save mappings</button>
-            <p id="mapping-status" role="status"></p>
-          </form>
-        </details>
-      </aside>
-    </div>
+      <section class="panel gifts">
+        <h2>Gift effects</h2>
+        <p>Test any effect for free while you climb.</p>
+        <div id="effects"></div>
+        <p id="last-gift" role="status">Waiting for a gift or test.</p>
+      </section>
+      <details class="panel mappings">
+        <summary>Change gift mappings</summary>
+        <p>Enter the gift names exactly as TikFinity reports them. A blank field disables the live trigger for that effect.</p>
+        <form id="mappings">
+          <div id="mapping-fields"></div>
+          <button class="primary" type="submit">Save mappings</button>
+          <p id="mapping-status" role="status"></p>
+        </form>
+      </details>
+    </aside>
     <section class="setup panel" id="setup">
       <h2>Play with your TikTok LIVE</h2>
       <ol>

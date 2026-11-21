@@ -1,58 +1,60 @@
-export const WIDTH = 480;
+export const WIDTH = 1120;
 export const HEIGHT = 720;
-export const DEPTH = 360;
+export const DEPTH = 1100;
 export const PLAYER_WIDTH = 26;
 export const PLAYER_HEIGHT = 30;
 export const PLAYER_DEPTH = 26;
 
 const sections = [
   {
-    name: "The biscuit tin",
+    name: "Quarry entrance",
     ledges: [
-      [100, 0, 200, "floor", 180, 166],
-      [205, 84, 110, "biscuit", 112, 66],
-      [325, 173, 96, "wafer", 162, 68],
-      [249, 264, 82, "biscuit", 232, 74],
-      [124, 355, 100, "wobble", 266, 77],
-      [94, 450, 54, "wafer", 185, 68],
-      [222, 543, 88, "biscuit", 126, 67],
-      [346, 630, 102, "wafer", 177, 75],
+      [330, 0, 260, "floor", 885, 310],
+      [330, 65, 164, "stone", 690, 120],
+      [400, 148, 150, "stone", 555, 122],
+      [555, 220, 168, "deck", 522, 104],
+      [730, 271, 210, "catwalk", 490, 92],
+      [855, 330, 132, "wobble", 355, 114],
+      [865, 420, 158, "deck", 215, 120],
     ],
   },
   {
-    name: "The corner shop",
+    name: "Cargo yard",
     ledges: [
-      [275, 724, 159, "crate", 242, 126],
-      [153, 813, 72, "bottle", 267, 69],
-      [99, 906, 63, "bottle", 194, 64],
-      [224, 995, 92, "moving", 121, 70],
-      [351, 1084, 80, "bottle", 155, 66],
-      [257, 1178, 92, "wobble", 227, 78],
-      [135, 1268, 100, "crate", 261, 79],
+      [724, 510, 220, "crate", 175, 160],
+      [600, 577, 147, "crate", 230, 127],
+      [450, 660, 108, "moving", 249, 105],
+      [290, 741, 159, "crate", 273, 139],
+      [196, 820, 93, "catwalk", 397, 180],
+      [202, 888, 112, "wobble", 565, 113],
+      [290, 966, 124, "deck", 680, 149],
     ],
   },
   {
-    name: "Rail replacement service",
+    name: "The gantry",
     ledges: [
-      [220, 1361, 156, "crate", 205, 120],
-      [348, 1450, 98, "wire", 158, 34],
-      [263, 1543, 95, "moving", 96, 73],
-      [150, 1632, 74, "wire", 135, 38],
-      [85, 1728, 55, "wobble", 219, 69],
-      [206, 1818, 112, "wire", 261, 37],
-      [333, 1910, 90, "moving", 194, 72],
+      [435, 1054, 174, "deck", 697, 151],
+      [605, 1138, 150, "wire", 691, 44],
+      [749, 1224, 144, "moving", 601, 94],
+      [753, 1224, 44, "catwalk", 456, 220],
+      [708, 1310, 111, "moving", 311, 101],
+      [565, 1402, 129, "wire", 284, 49],
+      [402, 1485, 124, "deck", 317, 112],
+      [295, 1578, 99, "wobble", 422, 116],
     ],
   },
   {
-    name: "The weather warning",
+    name: "Cloudline summit",
     ledges: [
-      [280, 2000, 160, "cloud", 122, 121],
-      [163, 2090, 91, "cloud", 144, 76],
-      [96, 2186, 60, "wobble", 224, 69],
-      [218, 2278, 81, "moving", 270, 74],
-      [350, 2369, 56, "cloud", 219, 67],
-      [259, 2462, 92, "wire", 144, 34],
-      [144, 2555, 150, "flag", 97, 116],
+      [280, 1658, 184, "cloud", 577, 171],
+      [401, 1748, 121, "cloud", 713, 108],
+      [541, 1839, 113, "wobble", 757, 78],
+      [680, 1931, 142, "moving", 703, 96],
+      [806, 2017, 72, "wire", 575, 135],
+      [744, 2111, 111, "cloud", 423, 96],
+      [585, 2204, 126, "deck", 405, 96],
+      [478, 2298, 92, "catwalk", 541, 156],
+      [546, 2394, 197, "flag", 678, 161],
     ],
   },
 ];
@@ -128,8 +130,11 @@ export function trigger(game, effect) {
   if (effect === "dragon") {
     if (game.dragon) return false;
     const direction = game.player.x >= WIDTH / 2 ? -1 : 1;
+    const startX = game.player.x - direction * 210;
     game.dragon = {
-      x: direction === 1 ? -64 : WIDTH + 64,
+      x: startX,
+      startX,
+      endX: game.player.x + direction * 245,
       y: game.player.y + 13,
       z: game.player.z,
       phase: "warning",
@@ -177,7 +182,7 @@ function updateDragon(game, dt) {
     game.noticeUntil = game.time + 2;
   }
 
-  if (dragon.x > WIDTH + 90 || dragon.x < -90) game.dragon = null;
+  if (dragon.direction * (dragon.x - dragon.endX) > 0) game.dragon = null;
 }
 
 function land(game, platform, position) {
@@ -218,13 +223,18 @@ export function step(game, input, dt) {
   const depth = Number(Boolean(input.front)) - Number(Boolean(input.back));
   const direction = effects.flip ? -1 : 1;
   const speed = (boost ? 342 : 265) / (across && depth ? Math.SQRT2 : 1);
+  const yaw = input.yaw || 0;
+  const cos = Math.cos(yaw);
+  const sin = Math.sin(yaw);
+  const moveX = across * cos + depth * sin;
+  const moveZ = depth * cos - across * sin;
   const traction = grounded ? 3100 : 1750;
-  const tractionX = slippery ? (across ? 580 : 118) : traction;
-  const tractionZ = slippery ? (depth ? 580 : 118) : traction;
+  const tractionX = slippery ? (Math.abs(moveX) > 0.001 ? 580 : 118) : traction;
+  const tractionZ = slippery ? (Math.abs(moveZ) > 0.001 ? 580 : 118) : traction;
   const gustX = effects.gust > 0 ? game.gustDirection * 110 : 0;
   const gustZ = effects.gust > 0 ? game.gustDepth * 55 : 0;
-  player.vx = approach(player.vx, across * direction * speed + gustX, tractionX * dt);
-  player.vz = approach(player.vz, depth * direction * speed + gustZ, tractionZ * dt);
+  player.vx = approach(player.vx, moveX * direction * speed + gustX, tractionX * dt);
+  player.vz = approach(player.vz, moveZ * direction * speed + gustZ, tractionZ * dt);
 
   player.coyote = grounded ? 0.095 : Math.max(0, player.coyote - dt);
   player.jumpBuffer = input.jump && !player.jumpHeld ? 0.12 : Math.max(0, player.jumpBuffer - dt);
@@ -276,7 +286,7 @@ export function step(game, input, dt) {
     }
   }
 
-  if (player.y < game.checkpoint.y - 235 || player.y < -130) {
+  if (player.y < game.checkpoint.y - 450 || player.y < -130) {
     respawn(game);
     game.notice = "Back at your checkpoint";
     game.noticeUntil = game.time + 2;

@@ -1,346 +1,506 @@
 import * as THREE from './vendor/three.module.min.js';
+import { GLTFLoader } from './vendor/gltf-loader.mjs';
 
-const shades = [
-  { sky: '#502944', grid: '#925366', face: '#ffa68c' },
-  { sky: '#203e49', grid: '#41756f', face: '#a8e9ab' },
-  { sky: '#332a51', grid: '#67629a', face: '#ffc279' },
-  { sky: '#344966', grid: '#6d89a9', face: '#d4e5ff' },
-];
+const colours = {
+  iron: '#233740', rails: '#60787a', bolts: '#d5d7bf', markings: '#f1bb63',
+  beacon: '#afffe1', stone: '#697b76', rust: '#b0613f', ice: '#8ee9f4',
+};
 const cube = new THREE.BoxGeometry(1, 1, 1);
 const sphere = new THREE.SphereGeometry(1, 14, 10);
-const cylinder = new THREE.CylinderGeometry(1, 1, 1, 16);
+const cylinder = new THREE.CylinderGeometry(1, 1, 1, 10);
 const materials = new Map();
 
 function matte(colour) {
-  if (!materials.has(colour)) materials.set(colour, new THREE.MeshStandardMaterial({ color: colour, roughness: .78 }));
+  if (!materials.has(colour)) materials.set(colour, new THREE.MeshStandardMaterial({ color: colour, roughness: .85 }));
   return materials.get(colour);
 }
 
-function piece(parent, geometry, material, width, height, depth, x, y, z) {
-  const mesh = new THREE.Mesh(geometry, typeof material === 'string' ? matte(material) : material);
-  mesh.scale.set(width, height, depth);
-  mesh.position.set(x, y, z);
-  parent.add(mesh);
-  return mesh;
+function mesh(parent, geometry, material, size, position) {
+  const item = new THREE.Mesh(geometry, typeof material === 'string' ? matte(material) : material);
+  item.scale.set(...size);
+  item.position.set(...position);
+  parent.add(item);
+  return item;
 }
 
 function box(parent, colour, w, h, d, x = 0, y = 0, z = 0) {
-  return piece(parent, cube, colour, w, h, d, x, y, z);
+  return mesh(parent, cube, colour, [w, h, d], [x, y, z]);
 }
 
-function ball(parent, colour, w, h, d, x = 0, y = 0, z = 0) {
-  return piece(parent, sphere, colour, w, h, d, x, y, z);
+function orb(parent, colour, w, h, d, x = 0, y = 0, z = 0) {
+  return mesh(parent, sphere, colour, [w, h, d], [x, y, z]);
 }
 
-function label(parent, words, x, y, z, w, h, background, ink = '#271b31') {
-  const surface = document.createElement('canvas');
-  surface.width = 512;
-  surface.height = 128;
-  const ctx = surface.getContext('2d');
-  ctx.fillStyle = background;
+function beam(parent, a, b, width, colour) {
+  const from = new THREE.Vector3(...a);
+  const delta = new THREE.Vector3(...b).sub(from);
+  const center = from.addScaledVector(delta, .5);
+  const item = box(parent, colour, width, delta.length(), width, ...center);
+  item.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.normalize());
+  return item;
+}
+
+function random(seed) {
+  return () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+}
+
+function surfaceTexture(style) {
+  const size = 256;
+  const image = document.createElement('canvas');
+  image.width = image.height = size;
+  const ctx = image.getContext('2d');
+  const pixels = ctx.createImageData(size, size);
+  const next = random(style === 'stone' ? 207 : 37);
+  for (let i = 0; i < pixels.data.length; i += 4) {
+    const brightness = 217 + next() * 25;
+    pixels.data.set([brightness, brightness, brightness, 255], i);
+  }
+  ctx.putImageData(pixels, 0, 0);
+  if (style === 'stone') {
+    for (let i = 0; i < 27; i++) {
+      const x = next() * size, y = next() * size;
+      ctx.strokeStyle = i % 2 ? '#101c191d' : '#ffffff33';
+      ctx.lineWidth = 1 + next() * 2;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + next() * 26, y + next() * 7);
+      ctx.lineTo(x + 35, y - next() * 21);
+      ctx.stroke();
+    }
+  } else {
+    for (let y = 12; y < size; y += 22) for (let x = 12; x < size; x += 22) {
+      const offset = ((y - 12) / 22) % 2 * 8;
+      ctx.save();
+      ctx.translate(x + offset, y);
+      ctx.rotate(Math.PI / 4);
+      ctx.fillStyle = '#15181a38';
+      ctx.fillRect(-2, -6, 5, 12);
+      ctx.fillStyle = '#faffdd50';
+      ctx.fillRect(-2, -6, 2, 12);
+      ctx.restore();
+    }
+  }
+  const texture = new THREE.CanvasTexture(image);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+  return texture;
+}
+
+function plaque(parent, words, x, y, z, w, h, accent = '#90e8d0') {
+  const image = document.createElement('canvas');
+  image.width = 512;
+  image.height = 128;
+  const ctx = image.getContext('2d');
+  ctx.fillStyle = '#18292c';
   ctx.fillRect(0, 0, 512, 128);
-  ctx.strokeStyle = ink;
-  ctx.lineWidth = 5;
-  ctx.strokeRect(9, 9, 494, 110);
-  ctx.fillStyle = ink;
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 4;
+  ctx.strokeRect(7, 7, 498, 114);
+  ctx.fillStyle = accent;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.font = '900 49px Trebuchet MS, sans-serif';
-  ctx.fillText(words, 256, 67, 455);
-  const texture = new THREE.CanvasTexture(surface);
+  ctx.font = 'bold 47px system-ui';
+  ctx.fillText(words, 256, 65, 465);
+  const texture = new THREE.CanvasTexture(image);
   texture.colorSpace = THREE.SRGBColorSpace;
-  const material = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), material);
-  mesh.position.set(x, y, z);
-  parent.add(mesh);
-  return mesh;
+  const item = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide }));
+  item.position.set(x, y, z);
+  parent.add(item);
 }
 
-function decorate(scene, zones, width) {
-  const titles = ['The biscuit tin', 'Corner shop', 'Rail replacement service', 'Weather warning'];
-  const jokes = ['No crumbs left behind', 'Dandelion and burdock', 'Mind the ridiculous gap', 'Chance of biscuit: 100%'];
-  for (const [index, section] of zones.entries()) {
-    const palette = shades[index];
-    label(scene, titles[index], width * .39, section.y + 312, -134, 260, 55, palette.face);
-    label(scene, jokes[index], width * .84, section.y + 486, -100, 204, 43, palette.face).rotation.z = -.10;
+function quarrySpire(scene, x, z, radius, bottom, top, seed) {
+  const next = random(seed);
+  const sides = 8;
+  const section = [0, .2, .54, .81, 1];
+  const rings = section.map((level, i) => Array.from({ length: sides }, (_, j) => {
+    const angle = j * 2 * Math.PI / sides + i * .07;
+    const r = radius * (.76 + next() * .48) * [1.2, 1.04, .9, .81, .56][i];
+    return [x + Math.cos(angle) * r + level * radius * .16,
+      bottom + (top - bottom) * level + (next() - .5) * radius * .16,
+      z + Math.sin(angle) * r];
+  }));
+  const positions = [], tints = [];
+  const rockColours = ['#647a74', '#748479', '#586d6a', '#4f6461', '#849189'].map((colour) => new THREE.Color(colour));
+  function triangle(a, b, c, colour) {
+    positions.push(...a, ...b, ...c);
+    for (let i = 0; i < 3; i++) tints.push(colour.r, colour.g, colour.b);
+  }
+  for (let i = 1; i < rings.length; i++) for (let j = 0; j < sides; j++) {
+    const k = (j + 1) % sides;
+    triangle(rings[i - 1][j], rings[i][j], rings[i][k], rockColours[Math.floor(next() * rockColours.length)]);
+    triangle(rings[i - 1][j], rings[i][k], rings[i - 1][k], rockColours[Math.floor(next() * rockColours.length)]);
+  }
+  const cap = rings.at(-1);
+  for (let i = 1; i + 1 < sides; i++) triangle(cap[0], cap[i + 1], cap[i], rockColours[1]);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(tints, 3));
+  geometry.computeVertexNormals();
+  scene.add(new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide })));
+}
 
-    const rows = [];
-    const gridStart = section.y - (index === 0 ? 280 : 90);
-    for (let y = gridStart; y < section.endY + 70; y += 52) {
-      rows.push(-430, y, -190, width + 430, y, -190);
-    }
-    for (let x = -430; x <= width + 430; x += 52) {
-      rows.push(x, gridStart, -190, x, section.endY + 70, -190);
-    }
-    const lines = new THREE.BufferGeometry();
-    lines.setAttribute('position', new THREE.Float32BufferAttribute(rows, 3));
-    scene.add(new THREE.LineSegments(lines, new THREE.LineBasicMaterial({ color: palette.grid, transparent: true, opacity: .42 })));
+function scenery(scene) {
+  quarrySpire(scene, 330, 875, 205, -1850, -35, 21);
+  quarrySpire(scene, 115, 600, 130, -1660, 92, 42);
+  quarrySpire(scene, 490, 375, 142, -1850, 126, 23);
+  quarrySpire(scene, 592, 761, 94, -1800, -25, 8);
+  quarrySpire(scene, 1080, 298, 158, -1600, 373, 28);
+  quarrySpire(scene, -310, 340, 205, -1800, 620, 19);
+  quarrySpire(scene, 1390, -130, 255, -1800, 750, 10);
+  quarrySpire(scene, 90, -420, 230, -1800, 420, 74);
+  quarrySpire(scene, 1375, 1260, 212, -1800, 760, 26);
+  quarrySpire(scene, -620, 1265, 295, -1900, 935, 75);
 
-    const landmark = new THREE.Group();
-    landmark.position.set(index % 2 ? width + 55 : -26, section.y + 150, -49);
-    landmark.rotation.set(.05, -.24, index % 2 ? -.13 : .18);
-    scene.add(landmark);
-    if (index === 0) {
-      box(landmark, '#54283c', 134, 177, 48);
-      box(landmark, '#d76370', 125, 166, 52);
-      label(landmark, 'Bourbon creams', 0, 47, 27, 111, 32, '#ffcc9a');
-      box(landmark, '#ffa46d', 56, 66, 4, -1, -20, 28).rotation.z = -.24;
-      for (let i = 0; i < 4; i++) ball(landmark, '#96543f', 3, 3, 2, i % 2 * 15 - 8, -25 + Math.floor(i / 2) * 16, 31);
-    } else if (index === 1) {
-      piece(landmark, cylinder, '#63402f', 43, 158, 35, 0, 0, 0);
-      ball(landmark, '#63402f', 43, 32, 35, 0, 78, 0);
-      piece(landmark, cylinder, '#ffc86b', 17, 31, 15, 0, 106, 0);
-      label(landmark, 'Fizzy pop', 0, 8, 36, 77, 47, '#fad588');
-    } else if (index === 2) {
-      box(landmark, '#362945', 20, 158, 20);
-      box(landmark, '#503853', 61, 149, 38, 0, 59, 4);
-      ['#f87582', '#ffdb70', '#c7fc8f'].forEach((colour, i) => ball(landmark, colour, 18, 18, 8, 0, 100 - i * 43, 24));
-    } else {
-      ball(landmark, '#ffbb7d', 54, 54, 21, 9, 99);
-      [-35, 0, 41].forEach((x, i) => ball(landmark, '#b7cdec', 45, 20 + 14 * (i % 2), 24, x, 60, 26));
+  for (const [x, y, z] of [[990, 370, 405], [110, 715, 322], [860, 1225, 554], [199, 1545, 494]]) {
+    const tower = new THREE.Group();
+    tower.position.set(x, y, z);
+    scene.add(tower);
+    for (const side of [-1, 1]) {
+      box(tower, colours.iron, 10, 390, 10, side * 23, -133);
+      beam(tower, [side * 23, -250, 1], [-side * 23, -155, 1], 5, colours.rails);
+      beam(tower, [side * 23, -155, 1], [-side * 23, -60, 1], 5, colours.rails);
+      beam(tower, [side * 23, -60, 1], [-side * 23, 36, 1], 5, colours.rails);
     }
+    box(tower, colours.rust, 59, 8, 43, 0, 65);
+    orb(tower, '#ffc48d', 4, 5, 4, 0, 73);
   }
 }
 
-function buildLedge(platform) {
+function buildLedge(platform, textures) {
   const group = new THREE.Group();
   const { kind, w, d, zone, checkpoint } = platform;
-  let top;
-  const layers = (bottom, filling, crust) => {
-    box(group, bottom, w, 15, d, 0, -14.5);
-    box(group, filling, w + 1, 5, d + 1, 0, -12);
-    return box(group, crust, w - 2, 7, d - 2, 0, -3.5);
-  };
-  switch (kind) {
-    case 'floor':
-    case 'wafer':
-    case 'biscuit': {
-      top = kind === 'biscuit' ? layers('#7c413e', '#e99d6e', '#c87754') : layers('#ca734c', '#ffe3a2', '#ffbb79');
-      const holes = Math.max(1, Math.floor(w / 14));
-      for (let i = 0; i < holes; i++) {
-        const x = (i + .5) * w / holes - w / 2;
-        for (const z of [-d * .28, d * .28]) ball(group, '#97543b', 1.7, .45, 1.7, x, .2, z);
+  const longX = w >= d;
+  const stone = kind === 'stone';
+  const narrow = kind === 'wire' || kind === 'catwalk';
+  const accent = ['#567781', '#a45c3e', '#718e93', '#b18b5e'][zone];
+  const depth = kind === 'floor' ? 39 : stone ? 30 : kind === 'crate' ? 32 : narrow ? 10 : 17;
+  const colour = stone ? '#89938a' : kind === 'flag' ? '#73a397' : kind === 'wobble' ? '#b9955e' : accent;
+  const topMaterial = new THREE.MeshStandardMaterial({ color: colour, map: stone ? textures.stone : textures.iron, roughness: .8 });
+  const underlay = box(group, stone ? colours.stone : colours.iron, w, depth, d, 0, -depth / 2 - 3);
+  box(group, topMaterial, w, 3, d, 0, -1.5);
+  if (!stone) {
+    for (const x of [-w / 2 + 5, w / 2 - 5]) {
+      box(group, narrow ? colours.markings : colours.rails, 3, .8, d - 10, x, .12);
+      for (const z of [-d / 2 + 6, d / 2 - 6]) {
+        mesh(group, cylinder, colours.bolts, [1.5, 1, 1.5], [x, .6, z]);
       }
-      break;
     }
-    case 'wire':
-      top = box(group, '#ffe3ad', w, 5, d, 0, -2.5);
-      for (const z of [-d / 2, d / 2]) box(group, '#745381', w + 3, 4, 3, 0, -4, z);
-      for (const x of [-w / 2, w / 2]) box(group, '#f87887', 7, 8, d + 4, x, -4);
-      break;
-    case 'bottle':
-      top = box(group, '#a9de94', w, 24, d, 0, -12);
-      box(group, '#eaba69', w * .48, 18, d + 1, 0, -13);
-      box(group, '#f7da8a', 9, 18, d * .78, w / 2 + 3, -13);
-      label(group, 'Fizz', 0, -11, d / 2 + .6, w * .42, 14, '#ffe2a4');
-      break;
-    case 'moving':
-      top = box(group, zone === 2 ? '#ffd28b' : '#a8b7ff', w, 6, d, 0, -3);
-      box(group, zone === 2 ? '#ce5473' : '#65588c', w, 22, d, 0, -17);
-      if (zone === 2) {
-        for (let x = -w / 2 + 12; x < w / 2 - 4; x += 17) box(group, '#432c54', 11, 9, 2, x, -12, d / 2);
-        for (const x of [-w / 3, w / 3]) ball(group, '#2a223a', 8, 8, 6, x, -25, d / 2 - 3);
-      }
-      break;
-    case 'wobble':
-      top = layers('#9b4560', '#f4c789', '#f9a1b9');
-      break;
-    case 'cloud':
-      top = box(group, '#cddaff', w, 7, d, 0, -3.5);
-      for (let x = -w / 2 + 9; x < w / 2 - 4; x += 16) {
-        ball(group, '#99abd0', 12, 10, 13, x, -8, d / 2 - 7);
-      }
-      break;
-    case 'flag':
-      top = layers('#495b56', '#b2d679', '#dafe89');
-      break;
-    default:
-      top = layers('#975f48', '#eb8f61', '#f5b473');
-      for (const x of [-w * .38, w * .38]) box(group, '#bf784f', 6, 17, 2, x, -13, d / 2);
-  }
+    for (const z of [-d / 2 + 5, d / 2 - 5]) {
+      box(group, narrow ? colours.markings : colours.rails, w - 10, .8, 3, 0, .12, z);
+    }
 
-  if (checkpoint && zone) {
-    box(group, '#ffeec4', 2, 34, 2, -w / 2 + 8, 17, -d / 2 + 6);
-    label(group, 'Checkpoint', -w / 2 + 40, 27, -d / 2 + 7, 65, 18, '#dfff8a');
+    if (kind === 'crate') {
+      for (let x = -w / 2 + 12; x < w / 2; x += 15) box(group, accent, 7, depth - 3, 2, x, -depth / 2 - 3, d / 2);
+      box(group, colours.rust, w + 2, 6, d + 2, 0, -depth + 1);
+      plaque(group, 'CARGO', 0, -15, d / 2 + 1.3, 37, 11, '#edd19a');
+    } else if (narrow) {
+      for (const sign of [-1, 1]) {
+        if (longX) {
+          box(group, colours.iron, w, 7, 5, 0, -12, sign * (d / 2 - 4));
+        } else {
+          box(group, colours.iron, 5, 7, d, sign * (w / 2 - 4), -12);
+        }
+      }
+    } else {
+      for (let part = 0; part < 4; part++) {
+        const stripe = box(group, colours.markings, 7, .7, 15, (part - 1.5) * 11, .48, d / 2 - 16);
+        stripe.rotation.y = -.55;
+      }
+    }
   }
-
-  const colour = top.material.color.clone();
-  top.material = top.material.clone();
-  return { group, top, colour };
+  if (checkpoint) {
+    for (const side of [-1, 1]) {
+      const x = side * (w / 2 - 12), z = -d / 2 + 12;
+      box(group, colours.iron, 9, 38, 9, x, 19, z);
+      box(group, new THREE.MeshBasicMaterial({ color: colours.beacon }), 6, 6, 6, x, 39, z);
+    }
+    if (platform.zone) plaque(group, 'Checkpoint', 0, 19, -d / 2 + 5, Math.min(w * .43, 102), 24);
+  }
+  return { group, underlay, material: topMaterial, colour: new THREE.Color(colour) };
 }
 
-function hero() {
+function climber() {
   const group = new THREE.Group();
   const body = new THREE.Group();
+  const fallback = new THREE.Group();
   group.add(body);
-  box(body, '#a25540', 26, 25, 21, 0, 17);
-  box(body, '#ffcf8d', 25, 24, 2, 0, 17, 11);
-  box(body, '#e6975a', 27, 3, 22, 0, 9);
-  const feet = [-1, 1].map((side) => box(body, '#372137', 9, 6, 13, side * 7, 3, 4));
-  for (const x of [-4, 5]) ball(body, '#2e1b31', 2.1, 3.1, 1.6, x, 19, 12.5);
-  box(body, '#e8ff72', 31, 4, 26, 0, 30, 0);
-  box(body, '#e8ff72', 18, 6, 17, 0, 34, 0);
-  const halo = new THREE.Mesh(new THREE.RingGeometry(17, 19, 32),
-    new THREE.MeshBasicMaterial({ color: '#f5d5ff', transparent: true, opacity: .85, side: THREE.DoubleSide }));
+  body.add(fallback);
+  box(fallback, '#ad6037', 17, 15, 12, 0, 20);
+  box(fallback, '#26363a', 14, 5, 11, 0, 12);
+  orb(fallback, '#b9896b', 6.4, 7.6, 6.4, 0, 33);
+  box(fallback, '#d89555', 16, 3, 15, 0, 37);
+  orb(fallback, '#da9f5c', 7.5, 4, 7, 0, 40);
+  box(fallback, '#395963', 13, 17, 5, 0, 20, -8.5);
+  box(fallback, '#8aeacb', 10, 2, 1, 0, 24, -11.2);
+  const legs = [], arms = [];
+  for (const side of [-1, 1]) {
+    const leg = new THREE.Group();
+    leg.position.set(side * 4.5, 12, 0);
+    box(leg, '#36494e', 7, 9, 7, 0, -4.5);
+    box(leg, '#202b31', 7, 4, 10, 0, -10, 2);
+    fallback.add(leg);
+    legs.push(leg);
+    const arm = new THREE.Group();
+    arm.position.set(side * 11, 25, 0);
+    box(arm, '#aa5936', 5, 10, 6, 0, -5);
+    box(arm, '#2a3b40', 5, 4, 6, 0, -11);
+    fallback.add(arm);
+    arms.push(arm);
+  }
+  const halo = new THREE.Mesh(new THREE.RingGeometry(17, 20, 32),
+    new THREE.MeshBasicMaterial({ color: colours.beacon, transparent: true, opacity: .8, side: THREE.DoubleSide }));
   halo.rotation.x = -Math.PI / 2;
   group.add(halo);
-  return { group, body, feet, halo };
+  body.rotation.y = Math.PI;
+  return { group, body, fallback, legs, arms, halo };
+}
+
+function placeModel(source, parent, size, position, heading = 0) {
+  const fitted = new THREE.Group();
+  const { min, max } = new THREE.Box3().setFromObject(source);
+  const bounds = new THREE.Vector3().subVectors(max, min);
+  const model = source.clone(true);
+  const center = new THREE.Vector3().addVectors(min, max).multiplyScalar(.5);
+  model.position.sub(new THREE.Vector3(center.x, min.y, center.z));
+  fitted.add(model);
+  fitted.scale.set(size[0] / bounds.x, size[1] / bounds.y, size[2] / bounds.z);
+  fitted.position.set(...position);
+  fitted.rotation.y = heading;
+  parent.add(fitted);
+}
+
+function loadAssets(canvas, scene, player, objects, platforms) {
+  const loader = new GLTFLoader();
+  const load = (name, place) => loader.loadAsync(`./assets/${name}.glb`)
+    .then(place)
+    .catch((error) => { console.warn(`Could not load ${name}`, error); return false; });
+  const climber = load('climber', ({ scene: model, animations }) => {
+    const { min, max } = new THREE.Box3().setFromObject(model);
+    const scale = 43 / (max.y - min.y);
+    model.scale.setScalar(scale);
+    model.position.set(-(min.x + max.x) * scale / 2, -min.y * scale, -(min.z + max.z) * scale / 2);
+    player.body.add(model);
+    player.fallback.visible = false;
+    player.mixer = new THREE.AnimationMixer(model);
+    player.clips = Object.fromEntries(animations.map((clip) => [clip.name, player.mixer.clipAction(clip)]));
+  });
+  const rocks = load('rock', ({ scene: model }) => {
+    placeModel(model, scene, [104, 150, 126], [146, -67, 704], .6);
+    placeModel(model, scene, [138, 178, 124], [511, 28, 387], -2.1);
+    placeModel(model, scene, [146, 206, 174], [1018, 243, 297], .5);
+    placeModel(model, scene, [81, 115, 101], [236, -31, 719], -.4);
+    for (const [index, { kind, w, d }] of platforms.entries()) {
+      if (kind !== 'stone') continue;
+      objects[index].underlay.visible = false;
+      placeModel(model, objects[index].group, [w, 52, d], [0, -55, 0]);
+    }
+  });
+  const pines = load('pine', ({ scene: model }) => {
+    for (const [x, y, z, h] of [[110, 91, 595, 96], [147, 85, 626, 66], [476, 118, 369, 87], [1095, 367, 296, 95]]) {
+      placeModel(model, scene, [h * .46, h, h * .46], [x, y, z], x);
+    }
+  });
+  const containers = load('box-large', ({ scene: model }) => {
+    for (const [index, { kind, w, d }] of platforms.entries()) {
+      if (kind !== 'crate') continue;
+      objects[index].underlay.visible = false;
+      placeModel(model, objects[index].group, [w, 35, d], [0, -38, 0]);
+    }
+  });
+  const catwalks = load('catwalk-straight', ({ scene: model }) => {
+    for (const [index, { kind, w, d }] of platforms.entries()) {
+      if (kind !== 'catwalk') continue;
+      placeModel(model, objects[index].group, [w, 14, d], [0, -25, 0]);
+    }
+  });
+  const cranes = load('crane', ({ scene: model }) => {
+    placeModel(model, scene, [137, 189, 110], [592, -26, 761], -1.45);
+    placeModel(model, scene, [174, 265, 132], [878, 410, 119], -.2);
+    placeModel(model, scene, [130, 232, 146], [68, 776, 508], 1.4);
+  });
+  const machines = load('machine-fortified', ({ scene: model }) => {
+    placeModel(model, scene, [75, 63, 70], [601, -24, 777], 2.25);
+    placeModel(model, scene, [90, 75, 72], [972, 405, 227], -.5);
+  });
+  const conveyors = load('conveyor-bars-stripe', ({ scene: model }) => {
+    for (const [index, { kind, w, d }] of platforms.entries()) {
+      if (kind !== 'moving') continue;
+      placeModel(model, objects[index].group, [w * 0.94, 11, d * 0.94], [0, -27, 0], Math.PI);
+    }
+  });
+  Promise.all([climber, rocks, pines, containers, catwalks, cranes, machines, conveyors]).then((results) => {
+    canvas.dataset.assets = results.includes(false) ? 'partial' : 'loaded';
+  });
+}
+
+function animatePlayer(player, state, speed, time, dt, won) {
+  if (player.mixer) {
+    const clip = won ? 'Cheer' : !state.grounded ? 'Jump_Idle' : speed > 22 ? 'Running_A' : 'Idle';
+    const next = player.clips[clip];
+    if (next && player.action !== next) {
+      player.action?.fadeOut(.15);
+      next.reset().fadeIn(.15).play();
+      player.action = next;
+    }
+    player.mixer.update(dt);
+  } else {
+    const stride = state.grounded && speed > 22 ? Math.sin(time * (11 + speed / 18)) * .84 : 0;
+    player.legs.forEach((leg, i) => { leg.rotation.x = (i ? 1 : -1) * stride; });
+    player.arms.forEach((arm, i) => { arm.rotation.x = (i ? -1 : 1) * stride * .65; });
+  }
 }
 
 function dragonModel() {
   const group = new THREE.Group();
-  ball(group, '#a1ef75', 33, 13, 10);
-  ball(group, '#d1ff93', 15, 11, 11, 28, 7);
-  ball(group, '#291933', 2, 2, 2, 37, 10, 9);
-  ball(group, '#291933', 2, 2, 2, 37, 10, -9);
-  box(group, '#ffd27b', 3, 12, 3, 25, 18, 0).rotation.z = .24;
-  ball(group, '#8ad766', 23, 4, 4, -39, 0).rotation.z = -.13;
+  orb(group, '#658e75', 33, 13, 10);
+  orb(group, '#91b78b', 15, 11, 11, 28, 7);
+  orb(group, '#e9cf95', 2, 2, 2, 37, 10, 9);
+  orb(group, '#e9cf95', 2, 2, 2, 37, 10, -9);
+  box(group, '#e7b375', 3, 12, 3, 25, 18).rotation.z = .24;
+  orb(group, '#668d78', 23, 4, 4, -39, 0).rotation.z = -.13;
   const wings = [-1, 1].map((side) => {
     const wing = new THREE.Group();
     const membrane = new THREE.BufferGeometry();
     membrane.setAttribute('position', new THREE.Float32BufferAttribute([
-      12, 0, 0, -9, 9, side * 44, -38, 0, side * 25,
-      12, 0, 0, -38, 0, side * 25, -18, 0, side * 11,
+      12, 0, 0, -9, 9, side * 56, -38, 0, side * 29,
+      12, 0, 0, -38, 0, side * 29, -18, 0, side * 11,
     ], 3));
     membrane.computeVertexNormals();
-    wing.add(new THREE.Mesh(membrane, new THREE.MeshStandardMaterial({ color: '#ff7fa9', side: THREE.DoubleSide })));
+    wing.add(new THREE.Mesh(membrane, new THREE.MeshStandardMaterial({ color: '#ae7659', side: THREE.DoubleSide })));
     group.add(wing);
     return wing;
   });
   return { group, wings };
 }
 
-function flag(scene, goal) {
+function summitFlag(scene, goal) {
   const group = new THREE.Group();
-  const fabric = new THREE.Group();
   group.position.set(goal.x, goal.y, goal.z);
-  box(group, '#ffecc0', 3, 56, 3, 0, 28);
-  ball(group, '#ffd372', 4, 4, 4, 0, 57);
-  const tiles = [];
-  for (let x = 0; x < 5; x++) {
-    for (let y = 0; y < 3; y++) {
-      tiles.push(box(fabric, (x + y) % 2 ? '#42274f' : '#e6ff8b', 8.1, 8.1, 2, 5 + x * 8, 51 - y * 8));
-    }
-  }
-  group.add(fabric);
+  box(group, colours.iron, 5, 82, 5, 0, 41);
+  orb(group, colours.markings, 5, 5, 5, 0, 84);
+  const cloth = new THREE.PlaneGeometry(45, 24, 8, 1);
+  cloth.translate(24, 66, 0);
+  const flag = new THREE.Mesh(cloth, new THREE.MeshStandardMaterial({ color: colours.beacon, side: THREE.DoubleSide }));
+  group.add(flag);
   scene.add(group);
-  return tiles;
+  return flag;
 }
 
-export function createRenderer(canvas, world) {
-  const { width, depth, platforms, zones, goal, platformPosition, targetPlatform } = world;
+export function createRenderer(canvas, world, follow) {
+  const { platforms, goal, platformPosition, targetPlatform } = world;
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.18;
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(shades[0].sky);
-  scene.fog = new THREE.FogExp2(shades[0].sky, .00038);
-  scene.add(new THREE.HemisphereLight('#fff3d7', '#8366ac', 2.25));
-  const key = new THREE.DirectionalLight('#fff1d9', 2.55);
-  key.position.set(-420, 850, 580);
+  scene.background = new THREE.Color('#7b9e9f');
+  scene.fog = new THREE.FogExp2('#b9c8bf', .00062);
+  new THREE.TextureLoader().load('./assets/skybreak-matte.jpg', (sky) => {
+    sky.mapping = THREE.EquirectangularReflectionMapping;
+    sky.colorSpace = THREE.SRGBColorSpace;
+    scene.background = sky;
+    scene.backgroundRotation.y = 2.1;
+  });
+  scene.add(new THREE.HemisphereLight('#d7eee2', '#68838d', 2.1));
+  const key = new THREE.DirectionalLight('#ffe5b1', 3.25);
+  key.position.set(-600, 870, 400);
   scene.add(key);
-  const camera = new THREE.OrthographicCamera(-330, 330, 270, -270, 1, 3200);
-  decorate(scene, zones, width);
+  scenery(scene);
 
-  const objects = platforms.map((platform) => buildLedge(platform));
+  const textures = { stone: surfaceTexture('stone'), iron: surfaceTexture('iron') };
+  const objects = platforms.map((platform) => buildLedge(platform, textures));
   objects.forEach(({ group }) => scene.add(group));
-  const player = hero();
+  const player = climber();
   const dragon = dragonModel();
   scene.add(player.group, dragon.group);
-  const flagTiles = flag(scene, goal);
-  const lane = box(scene, new THREE.MeshBasicMaterial({ color: '#ff9096', transparent: true, opacity: .5, depthWrite: false }), width, 2, 18);
-  const disc = new THREE.CircleGeometry(1, 32);
+  loadAssets(canvas, scene, player, objects, platforms);
+  const flag = summitFlag(scene, goal);
+  const lane = box(scene, new THREE.MeshBasicMaterial({ color: '#ff8754', transparent: true, opacity: .55, depthWrite: false }), 1, 2, 16);
+  const disc = new THREE.CircleGeometry(1, 24);
   disc.rotateX(-Math.PI / 2);
-  const shadow = piece(scene, disc, new THREE.MeshBasicMaterial({ color: '#351f47', transparent: true, opacity: .5, depthWrite: false }), 13, 1, 11);
+  const shadow = mesh(scene, disc, new THREE.MeshBasicMaterial({ color: '#172a2b', transparent: true, opacity: .55, depthWrite: false }),
+    [15, 1, 13], [0, 0, 0]);
   const landing = new THREE.Group();
-  const guideMaterial = new THREE.MeshBasicMaterial({ color: '#f1ff86', side: THREE.DoubleSide });
-  const ring = new THREE.Mesh(new THREE.RingGeometry(11, 15, 32), guideMaterial);
+  const marker = new THREE.MeshBasicMaterial({ color: colours.beacon, side: THREE.DoubleSide, toneMapped: false });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(14, 17, 32), marker);
   ring.rotation.x = -Math.PI / 2;
-  const arrow = new THREE.Mesh(new THREE.ConeGeometry(6.5, 12, 4), guideMaterial);
+  const arrow = new THREE.Mesh(new THREE.ConeGeometry(6, 11, 4), marker);
   arrow.rotation.z = Math.PI;
   landing.add(ring, arrow);
   scene.add(landing);
-  const sky = new THREE.Color();
-  const ice = new THREE.Color('#a1f7ff');
-  let centreY = 185;
-  let viewHeight = 560;
-  let orientation = 0;
+  const ice = new THREE.Color(colours.ice);
+  const facing = new THREE.Quaternion();
 
   return {
     resize() {
       const { clientWidth, clientHeight } = canvas;
       if (!clientWidth || !clientHeight) return;
-      const aspect = clientWidth / clientHeight;
-      const halfWidth = Math.max(316, 216 * aspect);
-      viewHeight = 2 * halfWidth / aspect;
-      camera.left = -halfWidth;
-      camera.right = halfWidth;
-      camera.top = viewHeight / 2;
-      camera.bottom = -viewHeight / 2;
-      camera.updateProjectionMatrix();
-      renderer.setPixelRatio(Math.min(devicePixelRatio, 1.6));
+      follow.resize(clientWidth / clientHeight);
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
       renderer.setSize(clientWidth, clientHeight, false);
     },
     reset() {
-      centreY = 185;
-      orientation = 0;
-      player.body.rotation.y = 0;
+      player.body.rotation.y = Math.PI;
     },
     draw(game, dt, reducedMotion) {
       const { player: state, effects, time } = game;
-      const zone = Math.max(0, zones.findLastIndex(({ y }) => state.y >= y));
-      const targetY = Math.max(viewHeight * .33, state.y + Math.min(viewHeight * .23, 168));
-      centreY += (targetY - centreY) * Math.min(1, dt * 8);
-      const roll = effects.flip > 0 ? Math.PI : 0;
-      orientation = reducedMotion ? roll : orientation + (roll - orientation) * Math.min(1, dt * 17);
-      camera.position.set(width / 2 + 220, centreY + 370, depth / 2 + 980);
-      camera.lookAt(width / 2, centreY, depth / 2);
-      camera.rotateZ(orientation);
-      scene.background.lerp(sky.set(shades[zone].sky), Math.min(1, dt * 4));
-      scene.fog.color.copy(scene.background);
-
+      follow.update(game, dt, reducedMotion);
       let support;
       for (const [index, platform] of platforms.entries()) {
         const { x, y, z, w, d } = platformPosition(platform, time);
-        const { group, top, colour } = objects[index];
+        const { group, material, colour } = objects[index];
         group.position.set(x + w / 2, y, z + d / 2);
-        top.material.color.copy(effects.slippery > 0 ? ice : colour);
-        if (state.y + 1 >= y && state.x > x && state.x < x + w && state.z > z && state.z < z + d) support = { y };
+        material.color.copy(effects.slippery > 0 ? ice : colour);
+        if (state.y + 1 >= y && state.x > x && state.x < x + w && state.z > z && state.z < z + d) support = y;
       }
 
       const next = targetPlatform(game);
       landing.visible = Boolean(next) && !game.won;
       if (landing.visible) {
         const { x, y, z, w, d } = platformPosition(next, time);
-        landing.position.set(x + w / 2, y + 1.4, z + d / 2);
-        arrow.position.y = 24 + (reducedMotion ? 0 : Math.sin(time * 6) * 3);
+        landing.position.set(x + w / 2, y + 1.5, z + d / 2);
+        arrow.position.y = 26 + (reducedMotion ? 0 : Math.sin(time * 5) * 4);
       }
-      shadow.visible = Boolean(support);
-      if (support) {
-        shadow.position.set(state.x, support.y + .8, state.z);
-        shadow.material.opacity = Math.max(.13, .55 - (state.y - support.y) / 320);
+      shadow.visible = support !== undefined;
+      if (shadow.visible) {
+        shadow.position.set(state.x, support + .95, state.z);
+        shadow.material.opacity = Math.max(.13, .63 - (state.y - support) / 260);
       }
 
       player.group.position.set(state.x, state.y, state.z);
-      const stride = state.grounded && Math.hypot(state.vx, state.vz) > 18 ? Math.sin(time * 25) * 3 : 0;
-      player.body.rotation.y += (Math.max(-.58, Math.min(.58, state.vx / 320)) - player.body.rotation.y) * Math.min(1, dt * 13);
-      player.feet.forEach((foot, i) => { foot.position.z = 4 + (i ? stride : -stride); });
-      player.halo.visible = Boolean(effects.float || effects.boost || effects.bounce);
-      player.halo.position.y = effects.float ? 10 + Math.sin(time * 5) * 8 : 4;
-      player.halo.material.color.set(effects.float ? '#ebbaff' : effects.boost ? '#e8ff71' : '#ffc879');
+      const speed = Math.hypot(state.vx, state.vz);
+      if (speed > 22) {
+        facing.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, Math.atan2(state.vx, state.vz));
+        player.body.quaternion.slerp(facing, 1 - Math.exp(-dt * 14));
+      }
+      animatePlayer(player, state, speed, time, dt, game.won);      player.halo.visible = Boolean(effects.float || effects.boost || effects.bounce);
+      player.halo.position.y = effects.float ? 12 + Math.sin(time * 5) * 7 : 4;
+      player.halo.material.color.set(effects.float ? '#e2bcff' : effects.boost ? '#b2ffcd' : '#ffca7d');
 
       const enemy = game.dragon;
       dragon.group.visible = enemy?.phase === 'swoop';
       lane.visible = enemy?.phase === 'warning';
-      if (lane.visible) lane.position.set(width / 2, enemy.y, enemy.z);
+      if (lane.visible) {
+        lane.position.set((enemy.startX + enemy.endX) / 2, enemy.y, enemy.z);
+        lane.scale.x = Math.abs(enemy.endX - enemy.startX);
+      }
       if (dragon.group.visible) {
         dragon.group.position.set(enemy.x, enemy.y, enemy.z);
         dragon.group.rotation.y = enemy.direction === 1 ? 0 : Math.PI;
         dragon.wings.forEach((wing, i) => { wing.rotation.x = (i ? 1 : -1) * Math.sin(time * 22) * .5; });
       }
-      if (!reducedMotion) flagTiles.forEach((tile) => {
-        tile.position.z = Math.sin(time * 5 - tile.position.x / 18) * tile.position.x / 12;
-      });
+      if (!reducedMotion) {
+        const positions = flag.geometry.attributes.position;
+        for (let vertex = 0; vertex < positions.count; vertex++) {
+          const x = positions.getX(vertex);
+          positions.setZ(vertex, Math.sin(time * 5 - x / 11) * x / 9);
+        }
+        positions.needsUpdate = true;
+      }
 
-      renderer.render(scene, camera);
+      renderer.render(scene, follow.camera);
     },
   };
 }

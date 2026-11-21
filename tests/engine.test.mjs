@@ -13,14 +13,16 @@ test("one continuous three-axis climb can reach the flag and save all four check
   for (const target of platforms.slice(1)) {
     assert.equal(targetPlatform(game), target);
     let landed = false;
+    const rise = target.y > game.player.grounded.y;
     for (let frame = 0; frame < 145; frame += 1) {
       const { player } = game;
       const position = platformPosition(target, game.time + 0.13);
       const stoppingDistance = (velocity) => velocity * Math.abs(velocity) / (2 * 1750);
       const across = position.x + position.w / 2 - player.x - stoppingDistance(player.vx);
       const depth = position.z + position.d / 2 - player.z - stoppingDistance(player.vz);
-      step(game, { left: across < -3, right: across > 3, front: depth > 3, back: depth < -3, jump: frame === 0 }, dt);
-      if (player.grounded === target) {
+      step(game, { left: across < -3, right: across > 3, front: depth > 3, back: depth < -3, jump: rise && frame === 0 }, dt);
+      const distance = Math.hypot(position.x + position.w / 2 - player.x, position.z + position.d / 2 - player.z);
+      if (player.grounded === target && (rise || distance < 16)) {
         landed = true;
         break;
       }
@@ -39,15 +41,30 @@ test("one continuous three-axis climb can reach the flag and save all four check
   assert.equal(trigger(game, "dragon"), false);
 });
 
-test("a jump aligned in x misses unless the player steers into the platform's depth", () => {
+test("the opening ledge needs forward movement as well as a jump", () => {
   const game = createGame();
-  play(game, 0.37, { jump: true, right: true });
-  play(game, 0.45);
+  const launchX = game.player.x;
+  const launchZ = game.player.z;
   const target = platforms[1];
-  assert(game.player.x >= target.x && game.player.x <= target.x + target.w);
-  assert.equal(game.player.z, 180);
-  assert(game.player.y < target.y);
-  assert.notEqual(game.player.grounded, target);
+  play(game, 0.94, { jump: true });
+  assert.equal(game.player.x, launchX);
+  assert.equal(game.player.z, launchZ);
+  assert.equal(game.player.grounded, platforms[0]);
+
+  play(game, 0.2, { back: true });
+  play(game, 0.5, { back: true, jump: true });
+  play(game, 0.32);
+  assert.equal(game.player.x, launchX);
+  assert.equal(game.player.grounded, target);
+});
+
+test("orbiting the camera rotates horizontal movement in world space", () => {
+  const game = createGame();
+  const { x, z } = game.player;
+  play(game, 0.22, { back: true, yaw: Math.PI / 2 });
+  assert(game.player.x < x - 35);
+  assert(Math.abs(game.player.z - z) < 0.01);
+  assert(game.player.vx < -240);
 });
 
 test("the summit flag requires the player to reach its x and z position", () => {
@@ -140,10 +157,11 @@ test("levitation lasts ten seconds and releasing it puts the player back under g
 
 test("flip reverses movement and gravity temporarily, then lets the player land", () => {
   const game = createGame();
+  const { x, z } = game.player;
   trigger(game, "flip");
   play(game, 0.35, { right: true, front: true });
-  assert(game.player.x < 55);
-  assert(game.player.z < 135);
+  assert(game.player.x < x - 45);
+  assert(game.player.z < z - 45);
   assert(game.player.y > 30);
   play(game, 3);
   assert.equal(game.effects.flip, 0);
@@ -152,10 +170,11 @@ test("flip reverses movement and gravity temporarily, then lets the player land"
 
 test("gust pushes the player and springs launch from solid ground", () => {
   const game = createGame();
+  const { x, z } = game.player;
   trigger(game, "gust");
   play(game, 0.5);
-  assert(game.player.x < 75);
-  assert(game.player.z > 200);
+  assert(game.player.x < x - 25);
+  assert(game.player.z > z + 20);
   trigger(game, "bounce");
   play(game, 0.12);
   assert(game.player.y > 50);

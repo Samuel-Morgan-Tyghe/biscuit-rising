@@ -1,22 +1,26 @@
 import { WIDTH, DEPTH, platforms, zones, goal, createGame, step, trigger, platformPosition, targetPlatform } from './engine.mjs';
 import { DEFAULT_GIFTS, createTikFinity } from './tikfinity.mjs';
 import { createRenderer } from './render.mjs';
+import { createFollowCamera } from './camera.mjs';
 
 const effects = {
-  dragon: { name: 'Dragon fly-by', icon: '🐉', colour: '#ffac94', text: 'Jump or dodge the swoop' },
-  slippery: { name: 'Butter fingers', icon: '🧈', colour: '#ffe881', text: 'Lose your grip' },
-  boost: { name: 'Biscuit boost', icon: '⚡', colour: '#ecff87', text: 'Jump higher and further' },
-  float: { name: 'Tea-powered levitation', icon: '🫖', colour: '#d9b8ff', text: 'Float for 10 seconds' },
-  flip: { name: 'Mind the flip', icon: '↻', colour: '#ffa1bf', text: 'Turn the world upside down' },
-  gust: { name: 'British summer', icon: '💨', colour: '#9ae8ff', text: 'Get pushed by a gust' },
-  bounce: { name: 'Custard trampoline', icon: '↟', colour: '#ffbb73', text: 'Bounce off platforms' },
+  dragon: { name: 'Dragon swoop', icon: '◈', colour: '#fea78a', text: 'Jump or dodge the swoop' },
+  slippery: { name: 'Flash freeze', icon: '✳', colour: '#92e3fa', text: 'Lose your grip' },
+  boost: { name: 'Power jump', icon: 'ϟ', colour: '#fce492', text: 'Jump higher and further' },
+  float: { name: 'Levitation', icon: '◌', colour: '#c6b5ff', text: 'Float for 10 seconds' },
+  flip: { name: 'Gravity flip', icon: '↻', colour: '#faaccc', text: 'Turn the world upside down' },
+  gust: { name: 'Crosswind', icon: '≋', colour: '#b3efd6', text: 'Get pushed by a gust' },
+  bounce: { name: 'Rebound', icon: '↟', colour: '#ffc88a', text: 'Bounce off platforms' },
 };
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game');
+const follow = createFollowCamera();
+let game = createGame();
+follow.reset(game);
 let renderer;
 try {
-  renderer = createRenderer(canvas, { width: WIDTH, depth: DEPTH, platforms, zones, goal, platformPosition, targetPlatform });
+  renderer = createRenderer(canvas, { width: WIDTH, depth: DEPTH, platforms, zones, goal, platformPosition, targetPlatform }, follow);
   canvas.dataset.renderer = '3d';
 } catch (error) {
   console.error(error);
@@ -33,7 +37,6 @@ const keys = {
 const held = new Set();
 let jumpQueued = false;
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
-let game = createGame();
 let status = 'offline';
 let mappings = { ...DEFAULT_GIFTS };
 
@@ -140,7 +143,8 @@ if (document.fullscreenEnabled) {
 
 function restart() {
   game = createGame();
-  renderer?.reset();
+  follow.reset(game);
+  renderer?.reset?.();
   held.clear();
   jumpQueued = false;
   canvas.focus({ preventScroll: true });
@@ -148,10 +152,49 @@ function restart() {
 $('restart').addEventListener('click', restart);
 $('again').addEventListener('click', restart);
 
+function alignRoute() {
+  const next = targetPlatform(game);
+  if (!next) return;
+  const ledge = platformPosition(next, game.time);
+  const { x, z } = game.player;
+  follow.reset(game, Math.atan2(x - ledge.x - ledge.w / 2, z - ledge.z - ledge.d / 2));
+}
+$('align-camera').addEventListener('click', () => {
+  alignRoute();
+  canvas.focus({ preventScroll: true });
+});
+
+let drag;
+canvas.addEventListener('pointerdown', (event) => {
+  if (drag || event.button !== 0) return;
+  canvas.focus({ preventScroll: true });
+  canvas.setPointerCapture(event.pointerId);
+  canvas.classList.add('looking');
+  drag = { id: event.pointerId, x: event.clientX, y: event.clientY };
+});
+canvas.addEventListener('pointermove', (event) => {
+  if (drag?.id !== event.pointerId) return;
+  follow.turn((drag.x - event.clientX) * .007, (event.clientY - drag.y) * .006);
+  drag.x = event.clientX;
+  drag.y = event.clientY;
+});
+for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+  canvas.addEventListener(type, (event) => {
+    if (drag?.id !== event.pointerId) return;
+    drag = undefined;
+    canvas.classList.remove('looking');
+  });
+}
+
 window.addEventListener('keydown', (event) => {
   if (game.won || event.ctrlKey || event.metaKey || event.altKey || event.target.closest?.('button, input, a, summary')) return;
   const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
-  if (!keys[key]) return;
+  if (key === 'r') {
+    event.preventDefault();
+    if (!event.repeat) alignRoute();
+    return;
+  }
+  if (!keys[key] && key !== 'q' && key !== 'e') return;
   event.preventDefault();
   if (keys[key] === 'jump' && !event.repeat) jumpQueued = true;
   held.add(key);
@@ -192,9 +235,12 @@ function frame(now) {
   previous = now;
   remaining += dt;
   for (const action of Object.keys(controls)) controls[action] = touch[action].dataset.held === 'true';
-  for (const key of held) controls[keys[key]] = true;
+  for (const key of held) {
+    if (keys[key]) controls[keys[key]] = true;
+  }
+  follow.turn((Number(held.has('e')) - Number(held.has('q'))) * dt * 1.9);
   while (remaining >= 1 / 120) {
-    step(game, { ...controls, jump: controls.jump || jumpQueued }, 1 / 120);
+    step(game, { ...controls, yaw: follow.yaw, jump: controls.jump || jumpQueued }, 1 / 120);
     jumpQueued = false;
     remaining -= 1 / 120;
   }
