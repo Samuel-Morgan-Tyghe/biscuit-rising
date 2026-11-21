@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createGame, goal, platformPosition, platforms, respawn, step, targetPlatform, trigger } from "../engine.mjs";
+import { createGame, goal, platformPosition, platforms, PLAYER_HEIGHT, PLAYER_WIDTH, respawn, step, targetPlatform, trigger } from "../engine.mjs";
 
 const dt = 1 / 120;
 
@@ -56,6 +56,74 @@ test("the opening ledge needs forward movement as well as a jump", () => {
   play(game, 0.32);
   assert.equal(game.player.x, launchX);
   assert.equal(game.player.grounded, target);
+});
+
+test("boosted, levitating, and inverted motion cannot pass through a ledge from below", () => {
+  const platform = platforms[1];
+  const ceiling = platform.y - platform.thickness - PLAYER_HEIGHT;
+  for (const effect of ["boost", "float", "flip"]) {
+    const game = createGame();
+    trigger(game, effect);
+    Object.assign(game.player, {
+      x: platform.x + platform.w / 2, y: ceiling - 8, z: platform.z + platform.d / 2,
+      grounded: null, vy: 754,
+    });
+    step(game, {}, 0.2);
+    assert.equal(game.player.y, ceiling, effect);
+    assert.equal(game.player.vy, 0, effect);
+    assert.equal(game.player.grounded, null, effect);
+  }
+});
+
+test("side contact stops movement through a ledge but allows sliding along it", () => {
+  const game = createGame();
+  const platform = platforms[1];
+  const wall = platform.x - PLAYER_WIDTH / 2;
+  const z = platform.z + platform.d / 2;
+  Object.assign(game.player, { x: wall - 40, y: 45, z, grounded: null, vx: 900 });
+  step(game, { right: true, front: true }, 0.1);
+  assert.equal(game.player.x, wall);
+  assert.equal(game.player.vx, 0);
+  assert(game.player.z > z + 15);
+});
+
+test("a fast fall lands on the first solid surface it hits", () => {
+  const game = createGame();
+  const platform = platforms[1];
+  Object.assign(game.player, {
+    x: platform.x + platform.w / 2, y: platform.y + 150, z: platform.z + platform.d / 2,
+    grounded: null, vy: -940,
+  });
+  step(game, {}, 0.26);
+  assert.equal(game.player.y, platform.y);
+  assert.equal(game.player.vy, 0);
+  assert.equal(game.player.grounded, platform);
+});
+
+test("a moving lift pushes the player along its side and carries the player on top", () => {
+  const platform = platforms.find(({ kind }) => kind === "moving");
+  const startTime = (Math.ceil(platform.y * 0.028 / (2 * Math.PI)) * 2 * Math.PI - platform.y * 0.028) / 1.8;
+  const start = platformPosition(platform, startTime);
+  const end = platformPosition(platform, startTime + 0.1);
+  assert(end.x > start.x + 1);
+
+  const side = createGame();
+  side.time = startTime;
+  Object.assign(side.player, {
+    x: start.x + start.w + PLAYER_WIDTH / 2 + 1,
+    y: start.y - 12, z: start.z + start.d / 2, grounded: null,
+  });
+  step(side, {}, 0.1);
+  assert(Math.abs(side.player.x - end.x - end.w - PLAYER_WIDTH / 2) < 1e-7);
+
+  const top = createGame();
+  top.time = startTime;
+  top.checkpoint = platform;
+  respawn(top);
+  step(top, {}, 0.1);
+  assert(Math.abs(top.player.x - end.x - end.w / 2) < 1e-7);
+  assert(Math.abs(top.player.z - end.z - end.d / 2) < 1e-7);
+  assert.equal(top.player.grounded, platform);
 });
 
 test("orbiting the camera rotates horizontal movement in world space", () => {

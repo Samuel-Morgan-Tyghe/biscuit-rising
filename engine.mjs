@@ -2,7 +2,7 @@ export const WIDTH = 1120;
 export const HEIGHT = 720;
 export const DEPTH = 1100;
 export const PLAYER_WIDTH = 26;
-export const PLAYER_HEIGHT = 30;
+export const PLAYER_HEIGHT = 43;
 export const PLAYER_DEPTH = 26;
 
 const sections = [
@@ -59,9 +59,11 @@ const sections = [
   },
 ];
 
+const thickness = { floor: 42, stone: 32, deck: 20, catwalk: 13, wobble: 20, crate: 38, moving: 20, wire: 13, cloud: 20, flag: 20 };
+
 export const platforms = sections.flatMap(({ ledges }, zone) => ledges.map(
   ([centre, y, w, kind, depthCentre, d], index) => ({
-    x: centre - w / 2, y, w, kind, z: depthCentre - d / 2, d, zone, checkpoint: index === 0,
+    x: centre - w / 2, y, w, kind, z: depthCentre - d / 2, d, thickness: thickness[kind], zone, checkpoint: index === 0,
   }),
 ));
 
@@ -198,6 +200,85 @@ function land(game, platform, position) {
   }
 }
 
+const axes = ["x", "y", "z"];
+const epsilon = 1e-7;
+const noMovement = { x: 0, y: 0, z: 0 };
+const solids = platforms.map((platform) => {
+  const { x, y, z, w, d, thickness } = platform;
+  return {
+    platform,
+    min: { x: x - halfWidth, y: y - thickness - PLAYER_HEIGHT, z: z - halfDepth },
+    max: { x: x + w + halfWidth, y, z: z + d + halfDepth },
+    end: platform,
+    offset: noMovement,
+    delta: noMovement,
+  };
+});
+
+function solidsForStep(from, to) {
+  return solids.map((solid) => {
+    const { platform } = solid;
+    if (platform.kind !== "moving" && platform.kind !== "wobble") return solid;
+    const start = platformPosition(platform, from);
+    const end = platformPosition(platform, to);
+    const offset = Object.fromEntries(axes.map((axis) => [axis, start[axis] - platform[axis]]));
+    const delta = Object.fromEntries(axes.map((axis) => [axis, end[axis] - start[axis]]));
+    return { ...solid, end, offset, delta };
+  });
+}
+
+function firstContact(player, motion, solids, elapsed) {
+  let hit;
+  for (const solid of solids) {
+    let entry = -Infinity;
+    let exit = Infinity;
+    let face;
+    for (const axis of axes) {
+      const shift = solid.offset[axis] + solid.delta[axis] * elapsed;
+      const low = solid.min[axis] + shift;
+      const high = solid.max[axis] + shift;
+      const origin = player[axis];
+      const relative = motion[axis] - solid.delta[axis] * (1 - elapsed);
+      if (Math.abs(relative) < epsilon) {
+        if (origin <= low + epsilon || origin >= high - epsilon) {
+          entry = Infinity;
+          break;
+        }
+        continue;
+      }
+      const a = (low - origin) / relative;
+      const b = (high - origin) / relative;
+      if (Math.min(a, b) > entry) {
+        entry = Math.min(a, b);
+        face = axis;
+      }
+      exit = Math.min(exit, Math.max(a, b));
+    }
+    if (entry >= -epsilon && entry <= 1 && entry < exit - epsilon && (!hit || entry < hit.time)) {
+      hit = { solid, axis: face, time: Math.max(0, entry) };
+    }
+  }
+  return hit;
+}
+
+function movePlayer(player, motion, solids) {
+  // Expand each solid by the player's size, then sweep their feet through it.
+  let elapsed = 0;
+  for (let contact = 0; contact < 4 && elapsed < 1; contact += 1) {
+    const hit = firstContact(player, motion, solids, elapsed);
+    const fraction = hit ? hit.time : 1;
+    for (const axis of axes) {
+      player[axis] += motion[axis] * fraction;
+      motion[axis] *= 1 - fraction;
+    }
+    elapsed += (1 - elapsed) * fraction;
+    if (!hit) break;
+    const { axis, solid } = hit;
+    motion[axis] = solid.delta[axis] * (1 - elapsed);
+    player[`v${axis}`] = 0;
+  }
+}
+
 export function step(game, input, dt) {
   if (game.won || dt <= 0) return;
   const { player, effects } = game;
@@ -207,13 +288,9 @@ export function step(game, input, dt) {
 
   for (const effect of Object.keys(effects)) effects[effect] = Math.max(0, effects[effect] - dt);
 
-  if (player.grounded) {
-    const oldGround = platformPosition(player.grounded, previousTime);
-    const ground = platformPosition(player.grounded, game.time);
-    player.x += ground.x - oldGround.x;
-    player.z += ground.z - oldGround.z;
-    player.y = ground.y;
-  }
+  const frameSolids = solidsForStep(previousTime, game.time);
+  const carrier = player.grounded && frameSolids.find(({ platform }) => platform === player.grounded);
+  const carry = carrier?.delta ?? noMovement;
 
   const floating = effects.float > 0 || effects.flip > 0;
   const grounded = Boolean(player.grounded);
@@ -246,45 +323,37 @@ export function step(game, input, dt) {
     player.jumpBuffer = 0;
   }
 
-  const oldY = player.y;
-  player.x += player.vx * dt;
-  if (player.x < halfWidth || player.x > WIDTH - halfWidth) {
-    player.x = clamp(player.x, halfWidth, WIDTH - halfWidth);
-    player.vx = 0;
-  }
-
-  player.z += player.vz * dt;
-  if (player.z < halfDepth || player.z > DEPTH - halfDepth) {
-    player.z = clamp(player.z, halfDepth, DEPTH - halfDepth);
-    player.vz = 0;
-  }
-
-  if (player.grounded && !overPlatform(player, platformPosition(player.grounded, game.time))) {
-    player.grounded = null;
-  }
-
   if (!player.grounded) {
     player.vy = floating
       ? approach(player.vy, effects.flip ? 145 : 88, 820 * dt)
       : Math.max(-940, player.vy - 1270 * dt);
-    player.y += player.vy * dt;
-    if (player.y > goal.y + 270) {
-      player.y = goal.y + 270;
-      player.vy = Math.min(0, player.vy);
-    }
-
-    if (!floating && player.vy <= 0) {
-      for (let index = platforms.length - 1; index >= 0; index -= 1) {
-        const platform = platforms[index];
-        const position = platformPosition(platform, game.time);
-        const oldTop = platformPosition(platform, previousTime).y;
-        if (oldY + 0.01 >= oldTop && player.y <= position.y && overPlatform(player, position)) {
-          land(game, platform, position);
-          break;
-        }
-      }
-    }
   }
+
+  movePlayer(player, {
+    x: player.vx * dt + carry.x,
+    y: player.vy * dt + carry.y,
+    z: player.vz * dt + carry.z,
+  }, frameSolids);
+
+  if (player.x < halfWidth || player.x > WIDTH - halfWidth) {
+    player.x = clamp(player.x, halfWidth, WIDTH - halfWidth);
+    player.vx = 0;
+  }
+  if (player.z < halfDepth || player.z > DEPTH - halfDepth) {
+    player.z = clamp(player.z, halfDepth, DEPTH - halfDepth);
+    player.vz = 0;
+  }
+  if (player.y > goal.y + 270) {
+    player.y = goal.y + 270;
+    player.vy = Math.min(0, player.vy);
+  }
+
+  const supportsPlayer = ({ end }) => Math.abs(player.y - end.y) < epsilon && overPlatform(player, end);
+  const support = !floating && player.vy <= 0 && (
+    carrier && supportsPlayer(carrier) ? carrier : frameSolids.findLast(supportsPlayer)
+  );
+  if (support) land(game, support.platform, support.end);
+  else player.grounded = null;
 
   if (player.y < game.checkpoint.y - 450 || player.y < -130) {
     respawn(game);

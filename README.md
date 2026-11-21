@@ -1,13 +1,13 @@
 # Skybreak
 
-Skybreak is a solo third-person 3D climb from a quarry above the clouds to a summit flag. Run across cargo platforms, gather your footing on narrow gantries and jump between lifts. Falling costs height and carries no damage. Touch the summit flag to finish.
+Skybreak is a solo third-person 3D climb from a quarry above the clouds to a summit flag. Follow the gantries, cargo platforms and lifts around one continuous mountainside. Falling costs height and carries no damage. Touch the summit flag to finish.
 
 ## Play the game
 
 [Play Skybreak in your browser](https://samuel-morgan-tyghe.github.io/biscuit-rising/).
 
 - Move with **WASD** or the **arrow keys**, relative to the camera. Jump with **Space**. Drag on the game or use **Q / E** to orbit, and press **R** to face the route. Touch screens have on-screen movement and jump controls.
-- Aim for the mint marker on the next ledge. Use your shadow to judge how far forward or back you need to move. The game requires WebGL 2.
+- Aim for the mint marker on the next ledge. Ledges are solid, so jump around their edges and land on top. Use your shadow to judge how far forward or back you need to move. The game requires WebGL 2.
 - Try the gift simulator to see what every effect does. You can practise the climb and simulate gifts before opening TikFinity.
 
 ## Connect your TikTok LIVE
@@ -32,7 +32,7 @@ Gift settings saved on the published page belong to that browser origin. Enter t
 
 ## Visual assets
 
-The local asset pack includes an animated KayKit climber, Kenney factory and nature models, and a custom panorama of the cloudline. See the [model credits and licences](assets/README.md) and the [panorama prompt](assets/skybreak-matte.md).
+The local asset pack includes an animated KayKit climber, Kenney factory details and Poly Haven cliff scans and industrial models. See the [model credits and licences](assets/README.md), [cliff and steel materials](assets/materials/README.md) and [panorama prompt](assets/skybreak-matte.md).
 
 ## Run the checks
 

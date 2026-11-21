@@ -47,48 +47,6 @@ function random(seed) {
   };
 }
 
-function surfaceTexture(style) {
-  const size = 256;
-  const image = document.createElement('canvas');
-  image.width = image.height = size;
-  const ctx = image.getContext('2d');
-  const pixels = ctx.createImageData(size, size);
-  const next = random(style === 'stone' ? 207 : 37);
-  for (let i = 0; i < pixels.data.length; i += 4) {
-    const brightness = 217 + next() * 25;
-    pixels.data.set([brightness, brightness, brightness, 255], i);
-  }
-  ctx.putImageData(pixels, 0, 0);
-  if (style === 'stone') {
-    for (let i = 0; i < 27; i++) {
-      const x = next() * size, y = next() * size;
-      ctx.strokeStyle = i % 2 ? '#101c191d' : '#ffffff33';
-      ctx.lineWidth = 1 + next() * 2;
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.lineTo(x + next() * 26, y + next() * 7);
-      ctx.lineTo(x + 35, y - next() * 21);
-      ctx.stroke();
-    }
-  } else {
-    for (let y = 12; y < size; y += 22) for (let x = 12; x < size; x += 22) {
-      const offset = ((y - 12) / 22) % 2 * 8;
-      ctx.save();
-      ctx.translate(x + offset, y);
-      ctx.rotate(Math.PI / 4);
-      ctx.fillStyle = '#15181a38';
-      ctx.fillRect(-2, -6, 5, 12);
-      ctx.fillStyle = '#faffdd50';
-      ctx.fillRect(-2, -6, 2, 12);
-      ctx.restore();
-    }
-  }
-  const texture = new THREE.CanvasTexture(image);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = 4;
-  return texture;
-}
-
 function plaque(parent, words, x, y, z, w, h, accent = '#90e8d0') {
   const image = document.createElement('canvas');
   image.width = 512;
@@ -106,81 +64,190 @@ function plaque(parent, words, x, y, z, w, h, accent = '#90e8d0') {
   ctx.fillText(words, 256, 65, 465);
   const texture = new THREE.CanvasTexture(image);
   texture.colorSpace = THREE.SRGBColorSpace;
-  const item = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide }));
+  const item = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: texture }));
   item.position.set(x, y, z);
-  parent.add(item);
+  const reverse = item.clone();
+  reverse.rotation.y = Math.PI;
+  reverse.position.z -= .3;
+  parent.add(item, reverse);
 }
 
-function quarrySpire(scene, x, z, radius, bottom, top, seed) {
-  const next = random(seed);
-  const sides = 8;
-  const section = [0, .2, .54, .81, 1];
-  const rings = section.map((level, i) => Array.from({ length: sides }, (_, j) => {
-    const angle = j * 2 * Math.PI / sides + i * .07;
-    const r = radius * (.76 + next() * .48) * [1.2, 1.04, .9, .81, .56][i];
-    return [x + Math.cos(angle) * r + level * radius * .16,
-      bottom + (top - bottom) * level + (next() - .5) * radius * .16,
-      z + Math.sin(angle) * r];
-  }));
-  const positions = [], tints = [];
-  const rockColours = ['#647a74', '#748479', '#586d6a', '#4f6461', '#849189'].map((colour) => new THREE.Color(colour));
-  function triangle(a, b, c, colour) {
-    positions.push(...a, ...b, ...c);
-    for (let i = 0; i < 3; i++) tints.push(colour.r, colour.g, colour.b);
+const ridgeProfile = [
+  [-1450, 560, 457, 690, 585],
+  [-435, 536, 495, 445, 380],
+  [-45, 535, 455, 330, 280],
+  [78, 565, 405, 264, 210],
+  [195, 636, 299, 224, 139],
+  [320, 623, 305, 173, 123],
+  [432, 590, 311, 179, 124],
+  [480, 523, 470, 223, 194],
+  [675, 525, 487, 173, 177],
+  [885, 519, 480, 208, 181],
+  [1050, 589, 458, 166, 175],
+  [1250, 481, 440, 157, 162],
+  [1480, 518, 553, 172, 139],
+  [1660, 549, 482, 157, 125],
+  [1900, 577, 524, 158, 112],
+  [2050, 519, 509, 126, 105],
+  [2090, 515, 535, 135, 105],
+  [2200, 497, 672, 119, 118],
+  [2346, 545, 674, 93, 80],
+];
+
+function ridgeAt(y) {
+  const next = ridgeProfile.findIndex(([height]) => height > y);
+  if (next < 1) return ridgeProfile.at(next).slice(1);
+  const a = ridgeProfile[next - 1], b = ridgeProfile[next];
+  const at = (y - a[0]) / (b[0] - a[0]);
+  return a.slice(1).map((value, i) => THREE.MathUtils.lerp(value, b[i + 1], at));
+}
+
+function mountainside(scene, rock) {
+  const next = random(426);
+  const sides = 46;
+  const rings = [];
+  const ribs = Array.from({ length: sides }, () => .88 + next() * .24);
+  for (let y = ridgeProfile[0][0]; y <= 2346; y = Math.min(y + 44, 2346)) {
+    const [x, z, rx, rz] = ridgeAt(y);
+    rings.push(Array.from({ length: sides + 1 }, (_, j) => {
+      const angle = (j % sides) / sides * Math.PI * 2;
+      const rib = ribs[j % sides] * (.9 + next() * .2);
+      return [
+        x + Math.cos(angle) * rx * rib,
+        y + (next() - .5) * 34,
+        z + Math.sin(angle) * rz * rib,
+      ];
+    }));
+    rings.at(-1)[sides] = rings.at(-1)[0];
+    if (y === 2346) break;
   }
-  for (let i = 1; i < rings.length; i++) for (let j = 0; j < sides; j++) {
-    const k = (j + 1) % sides;
-    triangle(rings[i - 1][j], rings[i][j], rings[i][k], rockColours[Math.floor(next() * rockColours.length)]);
-    triangle(rings[i - 1][j], rings[i][k], rings[i - 1][k], rockColours[Math.floor(next() * rockColours.length)]);
+
+  const positions = [], uvs = [], colours = [];
+  for (const ring of rings) for (const [j, point] of ring.entries()) {
+    positions.push(...point);
+    uvs.push(j / sides * 12, point[1] / 168);
+    const shade = .85 + next() * .15;
+    colours.push(shade, shade, shade);
   }
-  const cap = rings.at(-1);
-  for (let i = 1; i + 1 < sides; i++) triangle(cap[0], cap[i + 1], cap[i], rockColours[1]);
+  const indices = [];
+  const row = sides + 1;
+  for (let i = 0; i < rings.length - 1; i++) for (let j = 0; j < sides; j++) {
+    const a = i * row + j, b = a + row;
+    indices.push(a, b, b + 1, a, b + 1, a + 1);
+  }
+  const end = (rings.length - 1) * row;
+  for (let i = 1; i < sides - 1; i++) indices.push(end, end + i + 1, end + i);
+
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setAttribute('color', new THREE.Float32BufferAttribute(tints, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colours, 3));
+  geometry.setIndex(indices);
   geometry.computeVertexNormals();
-  scene.add(new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide })));
+  const cliff = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
+    color: '#c4c9c6', map: rock, bumpMap: rock, bumpScale: 3.2, roughness: .99,
+    vertexColors: true, side: THREE.DoubleSide,
+  }));
+  cliff.castShadow = cliff.receiveShadow = true;
+  scene.add(cliff);
+  return cliff;
 }
 
-function scenery(scene) {
-  quarrySpire(scene, 330, 875, 205, -1850, -35, 21);
-  quarrySpire(scene, 115, 600, 130, -1660, 92, 42);
-  quarrySpire(scene, 490, 375, 142, -1850, 126, 23);
-  quarrySpire(scene, 592, 761, 94, -1800, -25, 8);
-  quarrySpire(scene, 1080, 298, 158, -1600, 373, 28);
-  quarrySpire(scene, -310, 340, 205, -1800, 620, 19);
-  quarrySpire(scene, 1390, -130, 255, -1800, 750, 10);
-  quarrySpire(scene, 90, -420, 230, -1800, 420, 74);
-  quarrySpire(scene, 1375, 1260, 212, -1800, 760, 26);
-  quarrySpire(scene, -620, 1265, 295, -1900, 935, 75);
-
-  for (const [x, y, z] of [[990, 370, 405], [110, 715, 322], [860, 1225, 554], [199, 1545, 494]]) {
-    const tower = new THREE.Group();
-    tower.position.set(x, y, z);
-    scene.add(tower);
+function buildSupports(scene, platforms) {
+  const group = new THREE.Group();
+  const steel = '#33464b', paint = '#846340', reinforcement = '#52656a';
+  const next = random(953);
+  for (const { x, y, z, w, d, thickness, kind } of platforms) {
+    const centre = [x + w / 2, y - thickness, z + d / 2];
+    const [rx, rz, a, b] = ridgeAt(y - 88);
+    const t = Math.atan2(centre[2] - rz, centre[0] - rx);
+    const ax = rx + .94 * a * Math.cos(t), az = rz + .94 * b * Math.sin(t);
+    const reach = Math.hypot(centre[0] - ax, centre[2] - az);
+    if (reach < 55) continue;
+    const top = centre[1] - (kind === 'moving' || kind === 'wobble' ? 17 : 5);
+    const anchorY = top - Math.min(159, 48 + reach * .34);
+    const vx = -Math.sin(t), vz = Math.cos(t);
+    const width = Math.min(w, d) * .28;
     for (const side of [-1, 1]) {
-      box(tower, colours.iron, 10, 390, 10, side * 23, -133);
-      beam(tower, [side * 23, -250, 1], [-side * 23, -155, 1], 5, colours.rails);
-      beam(tower, [side * 23, -155, 1], [-side * 23, -60, 1], 5, colours.rails);
-      beam(tower, [side * 23, -60, 1], [-side * 23, 36, 1], 5, colours.rails);
+      const dx = vx * width * side, dz = vz * width * side;
+      const ledge = [centre[0] + dx, top, centre[2] + dz];
+      const anchor = [ax + dx, anchorY, az + dz];
+      const upper = [ax + dx, top - Math.min(51, reach * .15), az + dz];
+      beam(group, ledge, anchor, 6, steel);
+      beam(group, ledge, upper, 5, paint);
+      const at = .46;
+      const middle = ledge.map((value, i) => THREE.MathUtils.lerp(value, anchor[i], at));
+      beam(group, middle, [upper[0], upper[1], upper[2]], 3, reinforcement);
     }
-    box(tower, colours.rust, 59, 8, 43, 0, 65);
-    orb(tower, '#ffc48d', 4, 5, 4, 0, 73);
+    beam(group, [centre[0] - vx * width, top - 5, centre[2] - vz * width],
+      [centre[0] + vx * width, top - 5, centre[2] + vz * width], 7, paint);
+    if (kind === 'moving') {
+      box(group, steel, w + 57, 4, 6, centre[0], top - 3, centre[2] - d * .28);
+      box(group, steel, w + 57, 4, 6, centre[0], top - 3, centre[2] + d * .28);
+    }
+    if (next() > .57) {
+      box(group, '#292c2c', 10, 8, 6, centre[0], top - 11, centre[2] + d * .33);
+      orb(group, '#dc9d5b', 2.6, 2.6, 3, centre[0], top - 11, centre[2] + d * .33 + 2);
+    }
   }
+
+  for (const side of [-1, 1]) {
+    const track = [[448, -164, 688], [486, 560, 571], [503, 1090, 622], [507, 1580, 679], [532, 2342, 750]];
+    for (let i = 1; i < track.length; i++) {
+      const shift = (point) => [point[0] + side * 8, point[1], point[2]];
+      beam(group, shift(track[i - 1]), shift(track[i]), 4, '#556e70');
+    }
+  }
+  scene.add(group);
+}
+
+function loadMaterialTextures() {
+  const loader = new THREE.TextureLoader();
+  return Object.fromEntries([['stone', 'slate'], ['iron', 'steel']].map(([type, file]) => {
+    const texture = loader.load(`./assets/materials/${file}.jpg`);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+    texture.anisotropy = 8;
+    return [type, texture];
+  }));
+}
+
+function texturedBox(group, material, w, h, d, y, tile) {
+  const geometry = new THREE.BoxGeometry(w, h, d);
+  const { position, normal, uv } = geometry.attributes;
+  for (let i = 0; i < position.count; i++) {
+    const axisX = Math.abs(normal.getX(i)) > .5;
+    const axisY = Math.abs(normal.getY(i)) > .5;
+    uv.setXY(i, (axisX ? position.getZ(i) : position.getX(i)) / tile,
+      (axisY ? position.getZ(i) : position.getY(i)) / tile);
+  }
+  const item = new THREE.Mesh(geometry, material);
+  item.position.y = y;
+  item.castShadow = true;
+  item.receiveShadow = true;
+  group.add(item);
+  return item;
 }
 
 function buildLedge(platform, textures) {
   const group = new THREE.Group();
-  const { kind, w, d, zone, checkpoint } = platform;
+  const { kind, w, d, zone, checkpoint, thickness } = platform;
   const longX = w >= d;
   const stone = kind === 'stone';
   const narrow = kind === 'wire' || kind === 'catwalk';
   const accent = ['#567781', '#a45c3e', '#718e93', '#b18b5e'][zone];
-  const depth = kind === 'floor' ? 39 : stone ? 30 : kind === 'crate' ? 32 : narrow ? 10 : 17;
-  const colour = stone ? '#89938a' : kind === 'flag' ? '#73a397' : kind === 'wobble' ? '#b9955e' : accent;
-  const topMaterial = new THREE.MeshStandardMaterial({ color: colour, map: stone ? textures.stone : textures.iron, roughness: .8 });
-  const underlay = box(group, stone ? colours.stone : colours.iron, w, depth, d, 0, -depth / 2 - 3);
-  box(group, topMaterial, w, 3, d, 0, -1.5);
+  const depth = thickness - 2;
+  const colour = stone ? '#d4cabc' : kind === 'flag' ? '#b1cfce' : kind === 'wobble' ? '#cfb08b' : '#afc1c5';
+  const map = stone ? textures.stone : textures.iron;
+  const topMaterial = new THREE.MeshStandardMaterial({
+    color: colour, map, bumpMap: map, bumpScale: stone ? 1.2 : .17,
+    metalness: stone ? 0 : .53, roughness: stone ? .94 : .58,
+  });
+  const lowerMaterial = stone ? topMaterial : new THREE.MeshStandardMaterial({
+    color: accent, map, metalness: .47, roughness: .67, bumpMap: map, bumpScale: .15,
+  });
+  texturedBox(group, lowerMaterial, w, depth, d, -depth / 2 - 2, stone ? 123 : 91);
+  texturedBox(group, topMaterial, w, 2, d, -1, stone ? 123 : 91);
   if (!stone) {
     for (const x of [-w / 2 + 5, w / 2 - 5]) {
       box(group, narrow ? colours.markings : colours.rails, 3, .8, d - 10, x, .12);
@@ -219,7 +286,7 @@ function buildLedge(platform, textures) {
     }
     if (platform.zone) plaque(group, 'Checkpoint', 0, 19, -d / 2 + 5, Math.min(w * .43, 102), 24);
   }
-  return { group, underlay, material: topMaterial, colour: new THREE.Color(colour) };
+  return { group, material: topMaterial, colour: new THREE.Color(colour) };
 }
 
 function climber() {
@@ -265,11 +332,44 @@ function placeModel(source, parent, size, position, heading = 0) {
   const model = source.clone(true);
   const center = new THREE.Vector3().addVectors(min, max).multiplyScalar(.5);
   model.position.sub(new THREE.Vector3(center.x, min.y, center.z));
+  model.traverse((node) => { if (node.isMesh) node.castShadow = node.receiveShadow = true; });
   fitted.add(model);
   fitted.scale.set(size[0] / bounds.x, size[1] / bounds.y, size[2] / bounds.z);
   fitted.position.set(...position);
   fitted.rotation.y = heading;
   parent.add(fitted);
+}
+
+function recolourClimber(model) {
+  const palettes = new Map();
+  model.traverse((node) => {
+    if (!node.isMesh) return;
+    node.castShadow = node.receiveShadow = true;
+    const original = node.material.map;
+    if (!original?.image) return;
+    if (!palettes.has(original)) {
+      const image = document.createElement('canvas');
+      image.width = original.image.width;
+      image.height = original.image.height;
+      const context = image.getContext('2d');
+      context.drawImage(original.image, 0, 0);
+      const pixels = context.getImageData(0, 0, image.width, image.height);
+      for (let i = 0; i < pixels.data.length; i += 4) {
+        const [r, g, b] = pixels.data.subarray(i, i + 3);
+        if (g <= 1.24 * r || g <= 1.16 * b) continue;
+        pixels.data[i] = g * 1.11;
+        pixels.data[i + 1] = g * .62 + r * .17;
+        pixels.data[i + 2] = b * .72 + r * .19;
+      }
+      context.putImageData(pixels, 0, 0);
+      const map = original.clone();
+      map.source = new THREE.Source(image);
+      map.needsUpdate = true;
+      palettes.set(original, map);
+    }
+    node.material = node.material.clone();
+    node.material.map = palettes.get(original);
+  });
 }
 
 function loadAssets(canvas, scene, player, objects, platforms) {
@@ -282,56 +382,54 @@ function loadAssets(canvas, scene, player, objects, platforms) {
     const scale = 43 / (max.y - min.y);
     model.scale.setScalar(scale);
     model.position.set(-(min.x + max.x) * scale / 2, -min.y * scale, -(min.z + max.z) * scale / 2);
+    recolourClimber(model);
     player.body.add(model);
     player.fallback.visible = false;
     player.mixer = new THREE.AnimationMixer(model);
     player.clips = Object.fromEntries(animations.map((clip) => [clip.name, player.mixer.clipAction(clip)]));
   });
-  const rocks = load('rock', ({ scene: model }) => {
-    placeModel(model, scene, [104, 150, 126], [146, -67, 704], .6);
-    placeModel(model, scene, [138, 178, 124], [511, 28, 387], -2.1);
-    placeModel(model, scene, [146, 206, 174], [1018, 243, 297], .5);
-    placeModel(model, scene, [81, 115, 101], [236, -31, 719], -.4);
-    for (const [index, { kind, w, d }] of platforms.entries()) {
-      if (kind !== 'stone') continue;
-      objects[index].underlay.visible = false;
-      placeModel(model, objects[index].group, [w, 52, d], [0, -55, 0]);
-    }
-  });
-  const pines = load('pine', ({ scene: model }) => {
-    for (const [x, y, z, h] of [[110, 91, 595, 96], [147, 85, 626, 66], [476, 118, 369, 87], [1095, 367, 296, 95]]) {
-      placeModel(model, scene, [h * .46, h, h * .46], [x, y, z], x);
-    }
+  const rocks = load('models/mountainside', ({ scene: model }) => {
+    placeModel(model, scene, [357, 420, 280], [175, -449, 719], .52);
+    placeModel(model, scene, [298, 495, 225], [617, -408, 721], -1.88);
+    placeModel(model, scene, [260, 354, 176], [666, 671, 481], 1.46);
+    placeModel(model, scene, [160, 352, 112], [555, 1330, 540], -.71);
+    placeModel(model, scene, [151, 299, 116], [497, 1987, 680], 2.8);
   });
   const containers = load('box-large', ({ scene: model }) => {
     for (const [index, { kind, w, d }] of platforms.entries()) {
       if (kind !== 'crate') continue;
-      objects[index].underlay.visible = false;
-      placeModel(model, objects[index].group, [w, 35, d], [0, -38, 0]);
+      placeModel(model, objects[index].group, [w * .94, platforms[index].thickness - 6, d + 2], [0, 5 - platforms[index].thickness, 0]);
     }
   });
   const catwalks = load('catwalk-straight', ({ scene: model }) => {
     for (const [index, { kind, w, d }] of platforms.entries()) {
       if (kind !== 'catwalk') continue;
-      placeModel(model, objects[index].group, [w, 14, d], [0, -25, 0]);
+      placeModel(model, objects[index].group, [w, 8, d + 1], [0, -platforms[index].thickness, 0]);
     }
   });
-  const cranes = load('crane', ({ scene: model }) => {
-    placeModel(model, scene, [137, 189, 110], [592, -26, 761], -1.45);
-    placeModel(model, scene, [174, 265, 132], [878, 410, 119], -.2);
-    placeModel(model, scene, [130, 232, 146], [68, 776, 508], 1.4);
+  const cranes = load('models/overhead-crane', ({ scene: model }) => {
+    placeModel(model, scene, [270, 80, 90], [449, 123, 460], -.12);
+    placeModel(model, scene, [340, 100, 104], [512, 676, 367], .54);
+    placeModel(model, scene, [250, 79, 89], [650, 1288, 428], Math.PI / 2);
   });
-  const machines = load('machine-fortified', ({ scene: model }) => {
-    placeModel(model, scene, [75, 63, 70], [601, -24, 777], 2.25);
-    placeModel(model, scene, [90, 75, 72], [972, 405, 227], -.5);
+  const generators = load('models/generator', ({ scene: model }) => {
+    placeModel(model, scene, [38, 35, 34], [430, 0, 980], -.28);
+    placeModel(model, scene, [34, 31, 29], [495, 220, 488], .72);
+    placeModel(model, scene, [36, 33, 31], [345, 1658, 515], -.38);
+  });
+  const barrels = load('models/barrel', ({ scene: model }) => {
+    for (const [x, y, z, h] of [[234, 0, 953, 27], [240, 0, 981, 24], [210, 0, 974, 27],
+      [649, 510, 135, 27], [637, 510, 156, 25], [376, 1054, 744, 29], [391, 1054, 755, 25]]) {
+      placeModel(model, scene, [19, h, 19], [x, y, z], x * .11);
+    }
   });
   const conveyors = load('conveyor-bars-stripe', ({ scene: model }) => {
     for (const [index, { kind, w, d }] of platforms.entries()) {
       if (kind !== 'moving') continue;
-      placeModel(model, objects[index].group, [w * 0.94, 11, d * 0.94], [0, -27, 0], Math.PI);
+      placeModel(model, objects[index].group, [w * .94, 8, d * .94], [0, -platforms[index].thickness, 0], Math.PI);
     }
   });
-  Promise.all([climber, rocks, pines, containers, catwalks, cranes, machines, conveyors]).then((results) => {
+  Promise.all([climber, rocks, containers, catwalks, cranes, generators, barrels, conveyors]).then((results) => {
     canvas.dataset.assets = results.includes(false) ? 'partial' : 'loaded';
   });
 }
@@ -389,27 +487,65 @@ function summitFlag(scene, goal) {
   return flag;
 }
 
+function blendSkySeam(sky) {
+  const image = document.createElement('canvas');
+  image.width = sky.image.width;
+  image.height = sky.image.height;
+  const context = image.getContext('2d');
+  context.drawImage(sky.image, 0, 0);
+  const pixels = context.getImageData(0, 0, image.width, image.height);
+  const margin = Math.round(image.width * .08);
+  for (let x = 0; x < margin; x++) {
+    const weight = (1 - THREE.MathUtils.smoothstep(x, 0, margin)) / 2;
+    for (let y = 0; y < image.height; y++) {
+      const left = (y * image.width + x) * 4;
+      const right = (y * image.width + image.width - x - 1) * 4;
+      for (let channel = 0; channel < 3; channel++) {
+        const a = pixels.data[left + channel], b = pixels.data[right + channel];
+        pixels.data[left + channel] = THREE.MathUtils.lerp(a, b, weight);
+        pixels.data[right + channel] = THREE.MathUtils.lerp(b, a, weight);
+      }
+    }
+  }
+  context.putImageData(pixels, 0, 0);
+  sky.image = image;
+  sky.needsUpdate = true;
+}
+
 export function createRenderer(canvas, world, follow) {
   const { platforms, goal, platformPosition, targetPlatform } = world;
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.18;
+  renderer.toneMappingExposure = 1.13;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
   const scene = new THREE.Scene();
   scene.background = new THREE.Color('#7b9e9f');
-  scene.fog = new THREE.FogExp2('#b9c8bf', .00062);
+  scene.fog = new THREE.FogExp2('#b3c6cb', .00041);
   new THREE.TextureLoader().load('./assets/skybreak-matte.jpg', (sky) => {
+    blendSkySeam(sky);
     sky.mapping = THREE.EquirectangularReflectionMapping;
     sky.colorSpace = THREE.SRGBColorSpace;
     scene.background = sky;
-    scene.backgroundRotation.y = 2.1;
+    scene.environment = sky;
+    scene.environmentIntensity = .53;
+    scene.backgroundRotation.y = 1.75;
+    scene.environmentRotation.y = 1.75;
   });
-  scene.add(new THREE.HemisphereLight('#d7eee2', '#68838d', 2.1));
-  const key = new THREE.DirectionalLight('#ffe5b1', 3.25);
-  key.position.set(-600, 870, 400);
-  scene.add(key);
-  scenery(scene);
+  scene.add(new THREE.HemisphereLight('#d9efff', '#474439', 1.35));
+  const key = new THREE.DirectionalLight('#ffe1b0', 3.35);
+  key.castShadow = true;
+  key.shadow.mapSize.set(1024, 1024);
+  Object.assign(key.shadow.camera, { left: -290, right: 290, top: 290, bottom: -290, near: 35, far: 1310 });
+  key.shadow.camera.updateProjectionMatrix();
+  key.shadow.bias = -.00015;
+  key.shadow.normalBias = 1.7;
+  key.shadow.radius = 2.6;
+  scene.add(key, key.target);
 
-  const textures = { stone: surfaceTexture('stone'), iron: surfaceTexture('iron') };
+  const textures = loadMaterialTextures();
+  const cliff = mountainside(scene, textures.stone);
+  buildSupports(scene, platforms);
   const objects = platforms.map((platform) => buildLedge(platform, textures));
   objects.forEach(({ group }) => scene.add(group));
   const player = climber();
@@ -432,6 +568,9 @@ export function createRenderer(canvas, world, follow) {
   scene.add(landing);
   const ice = new THREE.Color(colours.ice);
   const facing = new THREE.Quaternion();
+  const sight = new THREE.Raycaster();
+  const eye = new THREE.Vector3(), chase = new THREE.Vector3();
+  const lightingOffset = new THREE.Vector3(-335, 520, 322);
 
   return {
     resize() {
@@ -447,6 +586,15 @@ export function createRenderer(canvas, world, follow) {
     draw(game, dt, reducedMotion) {
       const { player: state, effects, time } = game;
       follow.update(game, dt, reducedMotion);
+      const camera = follow.camera;
+      eye.set(state.x, state.y + 29, state.z);
+      chase.subVectors(camera.position, eye);
+      sight.far = chase.length();
+      sight.set(eye, chase.normalize());
+      const cliffHit = sight.intersectObject(cliff, false)[0];
+      if (cliffHit) camera.position.copy(eye).addScaledVector(chase, Math.max(30, cliffHit.distance - 10));
+      key.target.position.set(state.x, state.y + 13, state.z);
+      key.position.copy(key.target.position).add(lightingOffset);
       let support;
       for (const [index, platform] of platforms.entries()) {
         const { x, y, z, w, d } = platformPosition(platform, time);
@@ -466,7 +614,7 @@ export function createRenderer(canvas, world, follow) {
       shadow.visible = support !== undefined;
       if (shadow.visible) {
         shadow.position.set(state.x, support + .95, state.z);
-        shadow.material.opacity = Math.max(.13, .63 - (state.y - support) / 260);
+        shadow.material.opacity = Math.max(.05, .28 - (state.y - support) / 340);
       }
 
       player.group.position.set(state.x, state.y, state.z);
