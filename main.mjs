@@ -19,6 +19,7 @@ const gameShell = canvas.closest('.game-shell');
 const controls = { left: false, right: false, jump: false };
 const keys = { ArrowLeft: 'left', a: 'left', ArrowRight: 'right', d: 'right', ArrowUp: 'jump', w: 'jump', ' ': 'jump' };
 const held = new Set();
+let jumpQueued = false;
 const view = { height: 720, bottom: -24, rotation: 0, scale: 1 };
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
 let game = createGame();
@@ -52,10 +53,10 @@ const connection = createTikFinity({
       ? `Test gift: ${giftName}`
       : `Last gift: ${giftName} ×${count} from ${sender}`;
   },
-  onGift({ effect, giftName, simulated }) {
+  onGift({ effect, giftName, count, simulated }) {
     const applied = trigger(game, effect);
     $('last-gift').textContent = applied
-      ? `${simulated ? 'Test' : giftName} triggered ${effects[effect].name}.`
+      ? `${simulated ? 'Test' : count > 1 ? `${giftName} ×${count}` : giftName} triggered ${effects[effect].name}.`
       : `${effects[effect].name} is unavailable right now.`;
   },
 });
@@ -130,6 +131,8 @@ function restart() {
   game = createGame();
   view.bottom = -24;
   view.rotation = 0;
+  held.clear();
+  jumpQueued = false;
   canvas.focus({ preventScroll: true });
 }
 $('restart').addEventListener('click', restart);
@@ -140,6 +143,7 @@ window.addEventListener('keydown', (event) => {
   const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
   if (!keys[key]) return;
   event.preventDefault();
+  if (keys[key] === 'jump' && !event.repeat) jumpQueued = true;
   held.add(key);
 });
 window.addEventListener('keyup', (event) => {
@@ -147,6 +151,7 @@ window.addEventListener('keyup', (event) => {
 });
 window.addEventListener('blur', () => {
   held.clear();
+  jumpQueued = false;
   for (const button of document.querySelectorAll('[data-control]')) button.dataset.held = 'false';
 });
 
@@ -156,6 +161,7 @@ for (const button of document.querySelectorAll('[data-control]')) {
     canvas.focus({ preventScroll: true });
     button.setPointerCapture(event.pointerId);
     button.dataset.held = 'true';
+    if (button.dataset.control === 'jump') jumpQueued = true;
   });
   for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) {
     button.addEventListener(event, () => { button.dataset.held = 'false'; });
@@ -185,7 +191,8 @@ function frame(now) {
   for (const action of Object.keys(controls)) controls[action] = touch[action].dataset.held === 'true';
   for (const key of held) controls[keys[key]] = true;
   while (remaining >= 1 / 120) {
-    step(game, controls, 1 / 120);
+    step(game, { ...controls, jump: controls.jump || jumpQueued }, 1 / 120);
+    jumpQueued = false;
     remaining -= 1 / 120;
   }
 
