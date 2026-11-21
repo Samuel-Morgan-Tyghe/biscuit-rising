@@ -88,7 +88,10 @@ for (const [id, effect] of Object.entries(effects)) {
       trigger(game, id);
       $('last-gift').textContent = `Tested ${effect.name}. No live gift assigned.`;
     }
-    canvas.focus({ preventScroll: true });
+    if (renderer) {
+      gameShell.scrollIntoView({ block: 'start' });
+      canvas.focus({ preventScroll: true });
+    }
   });
   $('effects').append(row);
 
