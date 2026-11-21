@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createGame, goal, platformPosition, platforms, PLAYER_HEIGHT, PLAYER_WIDTH, respawn, step, targetPlatform, trigger } from "../engine.mjs";
+import { createGame, goal, platformPosition, platformTop, platforms, PLAYER_HEIGHT, PLAYER_WIDTH, respawn, step, targetPlatform, trigger } from "../engine.mjs";
 
 const dt = 1 / 120;
 
@@ -10,19 +10,22 @@ function play(game, seconds, input = {}) {
 
 test("one continuous three-axis climb can reach the flag and save all four checkpoints", () => {
   const game = createGame();
-  for (const target of platforms.slice(1)) {
-    assert.equal(targetPlatform(game), target);
+  for (let transfer = 0; targetPlatform(game) && transfer < platforms.length; transfer += 1) {
+    const target = targetPlatform(game);
     let landed = false;
-    const rise = target.y > game.player.grounded.y;
-    for (let frame = 0; frame < 145; frame += 1) {
+    const start = game.player.grounded;
+    const rise = target.y > start.y;
+    const walk = target.slope || target.stairway !== undefined || start.slope || start.stairway !== undefined || !rise;
+    for (let frame = 0; frame < 190; frame += 1) {
       const { player } = game;
       const position = platformPosition(target, game.time + 0.13);
       const stoppingDistance = (velocity) => velocity * Math.abs(velocity) / (2 * 1750);
       const across = position.x + position.w / 2 - player.x - stoppingDistance(player.vx);
       const depth = position.z + position.d / 2 - player.z - stoppingDistance(player.vz);
-      step(game, { left: across < -3, right: across > 3, front: depth > 3, back: depth < -3, jump: rise && frame === 0 }, dt);
+      step(game, { left: across < -3, right: across > 3, front: depth > 3, back: depth < -3, jump: !walk && frame === 0 }, dt);
       const distance = Math.hypot(position.x + position.w / 2 - player.x, position.z + position.d / 2 - player.z);
-      if (player.grounded === target && (rise || distance < 16)) {
+      const advancedOnStairs = target.stairway !== undefined && player.grounded?.stairway === target.stairway && player.grounded.y > target.y;
+      if (game.won || advancedOnStairs || (player.grounded === target && distance < 19)) {
         landed = true;
         break;
       }
@@ -56,6 +59,62 @@ test("the opening ledge needs forward movement as well as a jump", () => {
   play(game, 0.32);
   assert.equal(game.player.x, launchX);
   assert.equal(game.player.grounded, target);
+});
+
+test("the full quarry staircase can be run up and down without jumping", () => {
+  const game = createGame();
+  const steps = platforms.filter(({ stairway }) => stairway === 65);
+  game.checkpoint = platforms[1];
+  respawn(game);
+  game.player.x = steps[0].x + steps[0].w / 2;
+  game.player.z = 708;
+  const climbed = new Set();
+  for (let frame = 0; frame < 108; frame += 1) {
+    step(game, { back: true }, dt);
+    if (steps.includes(game.player.grounded)) climbed.add(game.player.grounded);
+  }
+  assert.equal(climbed.size, steps.length);
+  assert.equal(game.player.y, 148);
+  assert.equal(game.player.grounded.kind, "stone");
+  play(game, 1, { front: true });
+  assert.equal(game.player.grounded, platforms[1]);
+  assert.equal(game.player.y, 65);
+});
+
+test("the quarry ramp is a continuous uphill surface into a runnable bridge", () => {
+  const game = createGame();
+  const ramp = platforms.find(({ kind }) => kind === "ramp");
+  const preceding = platforms[platforms.indexOf(ramp) - 1];
+  const bridge = platforms[platforms.indexOf(ramp) + 1];
+  game.checkpoint = preceding;
+  respawn(game);
+  game.player.z = ramp.z + ramp.d / 2;
+  const heights = new Set();
+  for (let frame = 0; frame < 120; frame += 1) {
+    step(game, { right: true }, dt);
+    assert(game.player.grounded, "the trail should stay underfoot");
+    if (game.player.grounded === ramp) heights.add(game.player.y);
+  }
+  assert(heights.size > 25, "height should change continuously rather than in steps");
+  assert.equal(game.player.grounded, bridge);
+  assert(game.player.x - bridge.x > 100);
+  play(game, 0.81, { left: true });
+  assert.equal(game.player.grounded, ramp);
+  assert(game.player.y < bridge.y - 8);
+  assert(game.player.y > ramp.y);
+});
+
+test("the thin part of an inclined ramp stays solid under a fast upward sweep", () => {
+  const game = createGame();
+  const ramp = platforms.find(({ kind }) => kind === "ramp");
+  const x = 661;
+  const z = ramp.z + ramp.d / 2;
+  const ceiling = platformTop(ramp, x - PLAYER_WIDTH / 2, z) - ramp.thickness - PLAYER_HEIGHT;
+  Object.assign(game.player, { x, y: ceiling - 8, z, grounded: null, vy: 754 });
+  step(game, {}, 0.15);
+  assert(Math.abs(game.player.y - ceiling) < 1e-7);
+  assert.equal(game.player.vy, 0);
+  assert.equal(game.player.grounded, null);
 });
 
 test("boosted, levitating, and inverted motion cannot pass through a ledge from below", () => {

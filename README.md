@@ -1,6 +1,6 @@
 # Skybreak
 
-Skybreak is a solo third-person 3D climb from a quarry above the clouds to a summit flag. Follow the gantries, cargo platforms and lifts around one continuous mountainside. Falling costs height and carries no damage. Touch the summit flag to finish.
+Skybreak is a solo third-person 3D climb from a quarry above the clouds to a summit flag. Run up stone stairs and ramps, cross timber bridges and jump between concrete blocks, brickwork and steel girders on one continuous mountainside. Falling costs height and carries no damage. Touch the summit flag to finish.
 
 ## Play the game
 
@@ -32,7 +32,7 @@ Gift settings saved on the published page belong to that browser origin. Enter t
 
 ## Visual assets
 
-The local asset pack includes an animated KayKit climber, Kenney factory details and Poly Haven cliff scans and industrial models. See the [model credits and licences](assets/README.md), [cliff and steel materials](assets/materials/README.md) and [panorama prompt](assets/skybreak-matte.md).
+The local asset pack includes an animated [Tevy hiker](assets/climber/README.md), Kenney factory details and Poly Haven cliff scans and industrial models. See the [model credits and licences](assets/README.md), [cliff and steel materials](assets/materials/README.md) and [panorama prompt](assets/skybreak-matte.md).
 
 ## Run the checks
 

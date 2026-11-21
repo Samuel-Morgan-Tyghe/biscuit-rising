@@ -1,5 +1,6 @@
 import * as THREE from './vendor/three.module.min.js';
 import { GLTFLoader } from './vendor/gltf-loader.mjs';
+import { PLAYER_HEIGHT, platformTop } from './engine.mjs';
 
 const colours = {
   iron: '#233740', rails: '#60787a', bolts: '#d5d7bf', markings: '#f1bb63',
@@ -91,7 +92,7 @@ const ridgeProfile = [
   [2050, 519, 509, 126, 105],
   [2090, 515, 535, 135, 105],
   [2200, 497, 672, 119, 118],
-  [2346, 545, 674, 93, 80],
+  [2346, 545, 674, 93, 59],
 ];
 
 function ridgeAt(y) {
@@ -157,8 +158,13 @@ function buildSupports(scene, platforms) {
   const group = new THREE.Group();
   const steel = '#33464b', paint = '#846340', reinforcement = '#52656a';
   const next = random(953);
-  for (const { x, y, z, w, d, thickness, kind } of platforms) {
-    const centre = [x + w / 2, y - thickness, z + d / 2];
+  const flights = new Set();
+  for (const platform of platforms) {
+    const { x, y, z, w, d, thickness, kind, stairway } = platform;
+    if (kind === 'stair' && flights.has(stairway)) continue;
+    if (kind === 'stair') flights.add(stairway);
+    const cx = x + w / 2, cz = z + d / 2;
+    const centre = [cx, platformTop(platform, cx, cz) - thickness, cz];
     const [rx, rz, a, b] = ridgeAt(y - 88);
     const t = Math.atan2(centre[2] - rz, centre[0] - rx);
     const ax = rx + .94 * a * Math.cos(t), az = rz + .94 * b * Math.sin(t);
@@ -185,6 +191,7 @@ function buildSupports(scene, platforms) {
       box(group, steel, w + 57, 4, 6, centre[0], top - 3, centre[2] - d * .28);
       box(group, steel, w + 57, 4, 6, centre[0], top - 3, centre[2] + d * .28);
     }
+    if (kind === 'deck' || kind === 'bridge') addPylon(group, [centre[0], top, centre[2]], t + Math.PI / 2);
     if (next() > .57) {
       box(group, '#292c2c', 10, 8, 6, centre[0], top - 11, centre[2] + d * .33);
       orb(group, '#dc9d5b', 2.6, 2.6, 3, centre[0], top - 11, centre[2] + d * .33 + 2);
@@ -203,7 +210,7 @@ function buildSupports(scene, platforms) {
 
 function loadMaterialTextures() {
   const loader = new THREE.TextureLoader();
-  return Object.fromEntries([['stone', 'slate'], ['iron', 'steel']].map(([type, file]) => {
+  return Object.fromEntries([['stone', 'slate'], ['iron', 'steel'], ['wood', 'timber'], ['brick', 'brick']].map(([type, file]) => {
     const texture = loader.load(`./assets/materials/${file}.jpg`);
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
@@ -229,26 +236,274 @@ function texturedBox(group, material, w, h, d, y, tile) {
   return item;
 }
 
+function rampNormal(platform) {
+  const { axis, rise } = platform.slope;
+  return new THREE.Vector3(axis === 'x' ? -rise / platform.w : 0, 1, axis === 'z' ? -rise / platform.d : 0).normalize();
+}
+
+function rampGeometry(platform, material, group) {
+  const { x, y, z, w, d, thickness } = platform;
+  const footprint = [[0, 0], [0, d], [w, d], [w, 0]];
+  const upper = footprint.map(([dx, dz]) => [dx - w / 2, platformTop(platform, x + dx, z + dz) - y, dz - d / 2]);
+  const points = [...upper, ...upper.map(([px, py, pz]) => [px, py - thickness, pz])];
+  const faces = [[0, 1, 2, 3], [7, 6, 5, 4], [4, 5, 1, 0], [5, 6, 2, 1], [6, 7, 3, 2], [7, 4, 0, 3]];
+  const position = [], uv = [];
+  for (const [side, corners] of faces.entries()) for (const index of [0, 1, 2, 0, 2, 3]) {
+    const [px, py, pz] = points[corners[index]];
+    position.push(px, py, pz);
+    uv.push((side === 2 || side === 4 ? pz : px) / 103, (side < 2 ? pz : py) / 103);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(position, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geometry.computeVertexNormals();
+  const ramp = new THREE.Mesh(geometry, material);
+  ramp.castShadow = ramp.receiveShadow = true;
+  group.add(ramp);
+
+  for (const side of [-1, 1]) {
+    const acrossX = platform.slope.axis === 'x';
+    const reach = acrossX ? d : w;
+    const [a, b] = acrossX ? [side === 1 ? 1 : 0, side === 1 ? 2 : 3] : [side === 1 ? 3 : 0, side === 1 ? 2 : 1];
+    const edge = (index) => upper[index].map((coordinate, dimension) =>
+      dimension === 1 ? coordinate - 4 : dimension === (acrossX ? 2 : 0) ? coordinate - side * Math.min(3, reach / 8) : coordinate);
+    beam(group, edge(a), edge(b), 5, '#715a45');
+  }
+}
+
+function bridgeDetails(group, w, d, thickness) {
+  const alongX = w >= d;
+  const span = alongX ? w : d;
+  const width = alongX ? d : w;
+  const point = (along, up, across) => alongX ? [along, up, across] : [across, up, along];
+
+  for (let along = -span / 2 + 8; along < span / 2 - 5; along += 8) {
+    box(group, '#382e24', alongX ? .34 : width - 1, .16, alongX ? width - 1 : .34, ...point(along, .07, 0));
+  }
+  for (const side of [-1, 1]) {
+    const edge = side * (width / 2 - 2);
+    beam(group, point(-span / 2, -.7, edge), point(span / 2, -.7, edge), 3, '#604937');
+    let from = point(-span / 2, -4, edge);
+    for (let i = 1; i <= 8; i++) {
+      const amount = i / 8;
+      const down = -4 - Math.sin(Math.PI * amount) * Math.min(36, span / 7) - thickness * .14;
+      const at = point((amount - .5) * span, down, edge);
+      beam(group, from, at, 2.2, '#7d6d53');
+      if (i % 2 === 0 && i < 8) beam(group, at, point(at[alongX ? 0 : 2], -2, edge), 1.4, '#7d6d53');
+      from = at;
+    }
+  }
+}
+
+function addPylon(group, centre, direction) {
+  const [x, y, z] = centre;
+  const length = 137;
+  for (const side of [-1, 1]) {
+    const ix = Math.cos(direction) * 15 * side;
+    const iz = Math.sin(direction) * 15 * side;
+    beam(group, [x + ix, y, z + iz], [x + ix * 1.5, y - length, z + iz * 1.5], 4.4, '#5d6761');
+    const a = [x + ix, y - 47, z + iz], b = [x - ix, y - 90, z - iz];
+    beam(group, [x - ix, y - 6, z - iz], a, 2.3, '#817154');
+    beam(group, a, b, 2.3, '#817154');
+    beam(group, b, [x + ix * 1.5, y - length, z + iz * 1.5], 2.3, '#817154');
+  }
+}
+
+const salvage = new Map([
+  [65, ['brick', '#bb855f', 'bond']],
+  [148, ['stone', '#c0c0ac', 'bands']],
+  [220, ['iron', '#6f8e8c', 'scaffold']],
+  [330, ['wood', '#c99c77', 'shuttering']],
+  [420, ['stone', '#b6b8ae', 'culvert']],
+  [510, ['iron', '#bc7446', 'skip']],
+  [577, ['brick', '#c47b5a', 'hollows']],
+  [660, ['iron', '#7b927b', 'roller']],
+  [741, ['stone', '#c2b59e', 'ratchets']],
+  [820, ['iron', '#a6a99a', 'ladder']],
+  [888, ['iron', '#8a7975', 'rivets']],
+  [966, ['iron', '#7f998d', 'vent']],
+  [1054, ['iron', '#a78955', 'bolted']],
+  [1138, ['iron', '#bf9a51', 'wide-flange']],
+  [1224, ['wood', '#956c49', 'joists']],
+  [1310, ['iron', '#8292a1', 'trolley']],
+  [1402, ['iron', '#778889', 'truss']],
+  [1485, ['brick', '#9d6a53', 'arch']],
+  [1578, ['iron', '#8ba4a3', 'corrugated']],
+  [1658, ['stone', '#bfc6bf', 'weights']],
+  [1748, ['brick', '#af806b', 'stack']],
+  [1839, ['iron', '#abc2b9', 'grate']],
+  [1931, ['iron', '#947e70', 'cage']],
+  [2017, ['iron', '#996854', 'cantilever']],
+  [2111, ['stone', '#a6beb9', 'pipes']],
+  [2204, ['iron', '#839b84', 'gussets']],
+  [2298, ['wood', '#b8a482', 'outriggers']],
+]);
+
+function salvageFace(group, style, w, d, thickness, colour) {
+  const y = -thickness / 2, z = d / 2 + .2;
+  const line = (x, h, length, tint = '#454a45') => box(group, tint, length, .8, .65, x, h, z);
+  const upright = (x, size, tint = '#7c7763') => box(group, tint, size, thickness - 3, .75, x, y, z);
+  const diagonal = (a, b, width, tint = '#756f5d') => beam(group, [...a, z], [...b, z], width, tint);
+  const stud = (x, at, r = 1.45, tint = colours.bolts) => orb(group, tint, r, r, .7, x, at, z + .4);
+  const aperture = (x, radius) => {
+    const collar = mesh(group, cylinder, '#777a72', [radius, 1.3, radius], [x, y, z]);
+    collar.rotation.x = Math.PI / 2;
+    const bore = mesh(group, cylinder, '#303835', [radius * .72, .7, radius * .72], [x, y, z + .72]);
+    bore.rotation.x = Math.PI / 2;
+  };
+
+  switch (style) {
+    case 'bond':
+      line(0, -1.2, w - 3, '#a59e84');
+      break;
+    case 'bands':
+      for (const x of [-w / 3, w / 5]) upright(x, 2, '#565c4f');
+      line(0, -thickness + 3, w - 3, '#8b8c7c');
+      break;
+    case 'scaffold':
+      for (const side of [-1, 1]) {
+        upright(side * w * .37, 3, colour);
+        diagonal([side * w * .38, -thickness + 2], [0, -2], 2.2);
+      }
+      break;
+    case 'shuttering':
+      for (const x of [-.3, -.08, .27]) upright(x * w, 3.7, '#493a2d');
+      line(0, -3, w - 5, '#74664d');
+      break;
+    case 'culvert':
+      aperture(0, Math.min(9, thickness * .38));
+      line(0, -thickness + 1.5, w * .91, '#93958a');
+      break;
+    case 'skip':
+      line(0, -3.5, w - 4, '#a17850');
+      for (const x of [-.4, -.22, 0, .22, .4]) diagonal([x * w, -3], [x * w - 4, -thickness + 3], 2.5, colour);
+      break;
+    case 'hollows':
+      for (const x of [-.31, -.16, 0, .16, .31]) aperture(x * w, thickness * .16);
+      break;
+    case 'roller':
+      for (const x of [-.29, .29]) {
+        aperture(x * w, thickness * .24);
+        stud(x * w, y, 1.7);
+      }
+      line(0, y, w * .36);
+      break;
+    case 'ratchets':
+      for (const x of [-.27, .27]) {
+        upright(x * w, 2.2, '#ad825b');
+        box(group, '#554e40', 6, 3, 1.8, x * w, y, z + .7);
+      }
+      break;
+    case 'ladder':
+      for (let x = -w * .42; x < w * .46; x += 11) upright(x, 1.8, '#9ba18c');
+      break;
+    case 'rivets':
+      for (const h of [-3.5, -thickness + 3.5]) {
+        line(0, h, w - 2, '#7d746a');
+        for (let x = -w * .44; x < w * .45; x += 13) stud(x, h, 1.03);
+      }
+      break;
+    case 'vent':
+      for (let x = -w * .32; x < w * .32; x += 5) upright(x, 1, '#31423c');
+      break;
+    case 'bolted':
+      for (const x of [-.41, -.18, .18, .41]) {
+        upright(x * w, 5, '#8b7952');
+        stud(x * w, y);
+      }
+      break;
+    case 'wide-flange':
+      for (const x of [-w * .37, w * .37]) upright(x, 2.5, '#8d7042');
+      break;
+    case 'joists':
+      for (const x of [-.39, -.13, .13, .39]) upright(x * w, 6, '#645549');
+      break;
+    case 'trolley':
+      line(0, y, w * .88, '#616e73');
+      for (const x of [-w / 3, w / 3]) aperture(x, thickness * .23);
+      break;
+    case 'truss':
+      for (let x = -w * .38; x < w * .33; x += w / 8) diagonal([x, -2], [x + w / 11, -thickness + 2], 1.6);
+      break;
+    case 'arch':
+      for (let i = 0; i <= 7; i++) {
+        const angle = i * Math.PI / 7;
+        stud(Math.cos(angle) * w * .29, -thickness + 2 + Math.sin(angle) * thickness * .75, 1.6, '#b49275');
+      }
+      break;
+    case 'corrugated':
+      for (let x = -w * .46; x < w * .46; x += 6) upright(x, 1.5, colour);
+      break;
+    case 'weights':
+      for (const h of [1, 2, 3]) line(0, -thickness * h / 4, w - 3, '#798079');
+      break;
+    case 'stack':
+      upright(0, 3, '#766455');
+      line(0, y, w - 3);
+      break;
+    case 'grate':
+      for (let x = -w * .39; x < w * .39; x += 8) stud(x, y, 2, '#405550');
+      break;
+    case 'cage':
+      diagonal([-w * .4, -2], [w * .4, -thickness + 2], 2.3);
+      diagonal([w * .4, -2], [-w * .4, -thickness + 2], 2.3);
+      break;
+    case 'cantilever':
+      for (const x of [-w / 5, w / 5]) {
+        upright(x, 4, '#9f7059');
+        stud(x, y);
+      }
+      break;
+    case 'pipes':
+      for (const x of [-.26, 0, .26]) aperture(x * w, Math.min(7, thickness * .37));
+      break;
+    case 'gussets':
+      for (const x of [-.3, 0, .3]) {
+        diagonal([x * w - 6, -2], [x * w + 4, -thickness + 2], 3, '#8ba08a');
+        stud(x * w - 6, -3);
+      }
+      break;
+    case 'outriggers':
+      for (const x of [-w * .35, w * .35]) upright(x, 5, '#6a604f');
+      line(0, -1.7, w * .85, '#89816b');
+      break;
+  }
+}
+
 function buildLedge(platform, textures) {
   const group = new THREE.Group();
-  const { kind, w, d, zone, checkpoint, thickness } = platform;
+  const { kind, w, d, checkpoint, thickness } = platform;
   const longX = w >= d;
-  const stone = kind === 'stone';
-  const narrow = kind === 'wire' || kind === 'catwalk';
-  const accent = ['#567781', '#a45c3e', '#718e93', '#b18b5e'][zone];
+  const design = !['floor', 'stair', 'ramp', 'bridge', 'flag'].includes(kind) ? salvage.get(platform.y) : null;
+  const surface = design?.[0] ?? (kind === 'bridge' ? 'wood' : kind === 'stair' || kind === 'ramp' ? 'stone' : 'iron');
+  const [finish, trim] = design ? [design[1], design[2]] : [null, null];
+  const girder = kind === 'wire';
+  const narrow = girder || kind === 'catwalk';
   const depth = thickness - 2;
-  const colour = stone ? '#d4cabc' : kind === 'flag' ? '#b1cfce' : kind === 'wobble' ? '#cfb08b' : '#afc1c5';
-  const map = stone ? textures.stone : textures.iron;
+  const colour = finish ?? (kind === 'bridge' ? '#dfc6a2' : kind === 'stair' ? '#d8d3c5' : kind === 'ramp' ? '#c7c3b3' : '#afc1c5');
+  const map = textures[surface];
+  const metal = surface === 'iron';
   const topMaterial = new THREE.MeshStandardMaterial({
-    color: colour, map, bumpMap: map, bumpScale: stone ? 1.2 : .17,
-    metalness: stone ? 0 : .53, roughness: stone ? .94 : .58,
+    color: colour, map, bumpMap: map, bumpScale: metal ? .17 : .7,
+    metalness: metal ? .5 : 0, roughness: metal ? .61 : .94,
   });
-  const lowerMaterial = stone ? topMaterial : new THREE.MeshStandardMaterial({
-    color: accent, map, metalness: .47, roughness: .67, bumpMap: map, bumpScale: .15,
-  });
-  texturedBox(group, lowerMaterial, w, depth, d, -depth / 2 - 2, stone ? 123 : 91);
-  texturedBox(group, topMaterial, w, 2, d, -1, stone ? 123 : 91);
-  if (!stone) {
+  const lowerMaterial = topMaterial.clone();
+  lowerMaterial.color.multiplyScalar(.74);
+  const tile = surface === 'brick' ? 142 : surface === 'stone' ? 123 : surface === 'wood' ? 90 : 91;
+  if (kind === 'ramp') {
+    rampGeometry(platform, topMaterial, group);
+  } else {
+    if (girder) {
+      texturedBox(group, lowerMaterial, w, 2.4, d, 1.2 - thickness, 87);
+      texturedBox(group, lowerMaterial, longX ? w : w * .24, depth - 2.4, longX ? d * .24 : d, -depth / 2 - .8, 87);
+    } else {
+      texturedBox(group, lowerMaterial, w, depth, d, -depth / 2 - 2, tile);
+    }
+    texturedBox(group, topMaterial, w, 2, d, -1, tile);
+  }
+  if (kind === 'bridge') bridgeDetails(group, w, d, thickness);
+  if (trim) salvageFace(group, trim, w, d, thickness, colour);
+  if (surface === 'iron') {
     for (const x of [-w / 2 + 5, w / 2 - 5]) {
       box(group, narrow ? colours.markings : colours.rails, 3, .8, d - 10, x, .12);
       for (const z of [-d / 2 + 6, d / 2 - 6]) {
@@ -259,19 +514,7 @@ function buildLedge(platform, textures) {
       box(group, narrow ? colours.markings : colours.rails, w - 10, .8, 3, 0, .12, z);
     }
 
-    if (kind === 'crate') {
-      for (let x = -w / 2 + 12; x < w / 2; x += 15) box(group, accent, 7, depth - 3, 2, x, -depth / 2 - 3, d / 2);
-      box(group, colours.rust, w + 2, 6, d + 2, 0, -depth + 1);
-      plaque(group, 'CARGO', 0, -15, d / 2 + 1.3, 37, 11, '#edd19a');
-    } else if (narrow) {
-      for (const sign of [-1, 1]) {
-        if (longX) {
-          box(group, colours.iron, w, 7, 5, 0, -12, sign * (d / 2 - 4));
-        } else {
-          box(group, colours.iron, 5, 7, d, sign * (w / 2 - 4), -12);
-        }
-      }
-    } else {
+    if (kind === 'floor' || kind === 'flag') {
       for (let part = 0; part < 4; part++) {
         const stripe = box(group, colours.markings, 7, .7, 15, (part - 1.5) * 11, .48, d / 2 - 16);
         stripe.rotation.y = -.55;
@@ -292,37 +535,12 @@ function buildLedge(platform, textures) {
 function climber() {
   const group = new THREE.Group();
   const body = new THREE.Group();
-  const fallback = new THREE.Group();
-  group.add(body);
-  body.add(fallback);
-  box(fallback, '#ad6037', 17, 15, 12, 0, 20);
-  box(fallback, '#26363a', 14, 5, 11, 0, 12);
-  orb(fallback, '#b9896b', 6.4, 7.6, 6.4, 0, 33);
-  box(fallback, '#d89555', 16, 3, 15, 0, 37);
-  orb(fallback, '#da9f5c', 7.5, 4, 7, 0, 40);
-  box(fallback, '#395963', 13, 17, 5, 0, 20, -8.5);
-  box(fallback, '#8aeacb', 10, 2, 1, 0, 24, -11.2);
-  const legs = [], arms = [];
-  for (const side of [-1, 1]) {
-    const leg = new THREE.Group();
-    leg.position.set(side * 4.5, 12, 0);
-    box(leg, '#36494e', 7, 9, 7, 0, -4.5);
-    box(leg, '#202b31', 7, 4, 10, 0, -10, 2);
-    fallback.add(leg);
-    legs.push(leg);
-    const arm = new THREE.Group();
-    arm.position.set(side * 11, 25, 0);
-    box(arm, '#aa5936', 5, 10, 6, 0, -5);
-    box(arm, '#2a3b40', 5, 4, 6, 0, -11);
-    fallback.add(arm);
-    arms.push(arm);
-  }
+  body.rotation.y = Math.PI;
   const halo = new THREE.Mesh(new THREE.RingGeometry(17, 20, 32),
     new THREE.MeshBasicMaterial({ color: colours.beacon, transparent: true, opacity: .8, side: THREE.DoubleSide }));
   halo.rotation.x = -Math.PI / 2;
-  group.add(halo);
-  body.rotation.y = Math.PI;
-  return { group, body, fallback, legs, arms, halo };
+  group.add(body, halo);
+  return { group, body, halo };
 }
 
 function placeModel(source, parent, size, position, heading = 0) {
@@ -340,36 +558,21 @@ function placeModel(source, parent, size, position, heading = 0) {
   parent.add(fitted);
 }
 
-function recolourClimber(model) {
-  const palettes = new Map();
-  model.traverse((node) => {
-    if (!node.isMesh) return;
-    node.castShadow = node.receiveShadow = true;
-    const original = node.material.map;
-    if (!original?.image) return;
-    if (!palettes.has(original)) {
-      const image = document.createElement('canvas');
-      image.width = original.image.width;
-      image.height = original.image.height;
-      const context = image.getContext('2d');
-      context.drawImage(original.image, 0, 0);
-      const pixels = context.getImageData(0, 0, image.width, image.height);
-      for (let i = 0; i < pixels.data.length; i += 4) {
-        const [r, g, b] = pixels.data.subarray(i, i + 3);
-        if (g <= 1.24 * r || g <= 1.16 * b) continue;
-        pixels.data[i] = g * 1.11;
-        pixels.data[i + 1] = g * .62 + r * .17;
-        pixels.data[i + 2] = b * .72 + r * .19;
-      }
-      context.putImageData(pixels, 0, 0);
-      const map = original.clone();
-      map.source = new THREE.Source(image);
-      map.needsUpdate = true;
-      palettes.set(original, map);
-    }
-    node.material = node.material.clone();
-    node.material.map = palettes.get(original);
+function airborneClip(idle) {
+  const folds = {
+    thigh_L: .49, thigh_R: .30, calf_L: -.64, calf_R: -.45,
+    upperarm_L: .34, upperarm_R: .21, spine: .12,
+  };
+  const axis = new THREE.Vector3(1, 0, 0);
+  const tracks = idle.tracks.map((track) => {
+    const values = Array.from(track.values.slice(0, track.getValueSize()));
+    const angle = folds[track.name.split('.')[0]];
+    if (!angle || !track.name.endsWith('.quaternion')) return new track.constructor(track.name, [0, .62], [...values, ...values]);
+    const standing = new THREE.Quaternion().fromArray(values);
+    const bent = (amount) => standing.clone().multiply(new THREE.Quaternion().setFromAxisAngle(axis, angle * amount)).toArray();
+    return new track.constructor(track.name, [0, .17, .62], [...bent(.45), ...bent(1), ...bent(.72)]);
   });
+  return new THREE.AnimationClip('airborne', .62, tracks);
 }
 
 function loadAssets(canvas, scene, player, objects, platforms) {
@@ -377,16 +580,22 @@ function loadAssets(canvas, scene, player, objects, platforms) {
   const load = (name, place) => loader.loadAsync(`./assets/${name}.glb`)
     .then(place)
     .catch((error) => { console.warn(`Could not load ${name}`, error); return false; });
-  const climber = load('climber', ({ scene: model, animations }) => {
+  const climber = load('climber/hiker', ({ scene: model, animations }) => {
     const { min, max } = new THREE.Box3().setFromObject(model);
-    const scale = 43 / (max.y - min.y);
+    const scale = PLAYER_HEIGHT / (max.y - min.y);
     model.scale.setScalar(scale);
     model.position.set(-(min.x + max.x) * scale / 2, -min.y * scale, -(min.z + max.z) * scale / 2);
-    recolourClimber(model);
+    model.traverse((node) => { if (node.isMesh) node.castShadow = node.receiveShadow = true; });
     player.body.add(model);
-    player.fallback.visible = false;
     player.mixer = new THREE.AnimationMixer(model);
-    player.clips = Object.fromEntries(animations.map((clip) => [clip.name, player.mixer.clipAction(clip)]));
+    const idle = animations.find(({ name }) => name === 'idle');
+    const clips = [...animations, airborneClip(idle)];
+    player.clips = Object.fromEntries(clips.map((clip) => [clip.name, player.mixer.clipAction(clip)]));
+    for (const clip of ['airborne', 'wave']) {
+      player.clips[clip].setLoop(THREE.LoopOnce, 1);
+      player.clips[clip].clampWhenFinished = true;
+    }
+    canvas.dataset.climber = 'hiker';
   });
   const rocks = load('models/mountainside', ({ scene: model }) => {
     placeModel(model, scene, [357, 420, 280], [175, -449, 719], .52);
@@ -397,13 +606,13 @@ function loadAssets(canvas, scene, player, objects, platforms) {
   });
   const containers = load('box-large', ({ scene: model }) => {
     for (const [index, { kind, w, d }] of platforms.entries()) {
-      if (kind !== 'crate') continue;
+      if (kind !== 'crate' || platforms[index].y !== 510) continue;
       placeModel(model, objects[index].group, [w * .94, platforms[index].thickness - 6, d + 2], [0, 5 - platforms[index].thickness, 0]);
     }
   });
   const catwalks = load('catwalk-straight', ({ scene: model }) => {
     for (const [index, { kind, w, d }] of platforms.entries()) {
-      if (kind !== 'catwalk') continue;
+      if (kind !== 'catwalk' || platforms[index].y !== 820) continue;
       placeModel(model, objects[index].group, [w, 8, d + 1], [0, -platforms[index].thickness, 0]);
     }
   });
@@ -425,7 +634,7 @@ function loadAssets(canvas, scene, player, objects, platforms) {
   });
   const conveyors = load('conveyor-bars-stripe', ({ scene: model }) => {
     for (const [index, { kind, w, d }] of platforms.entries()) {
-      if (kind !== 'moving') continue;
+      if (kind !== 'moving' || platforms[index].y !== 660) continue;
       placeModel(model, objects[index].group, [w * .94, 8, d * .94], [0, -platforms[index].thickness, 0], Math.PI);
     }
   });
@@ -434,21 +643,17 @@ function loadAssets(canvas, scene, player, objects, platforms) {
   });
 }
 
-function animatePlayer(player, state, speed, time, dt, won) {
-  if (player.mixer) {
-    const clip = won ? 'Cheer' : !state.grounded ? 'Jump_Idle' : speed > 22 ? 'Running_A' : 'Idle';
-    const next = player.clips[clip];
-    if (next && player.action !== next) {
-      player.action?.fadeOut(.15);
-      next.reset().fadeIn(.15).play();
-      player.action = next;
-    }
-    player.mixer.update(dt);
-  } else {
-    const stride = state.grounded && speed > 22 ? Math.sin(time * (11 + speed / 18)) * .84 : 0;
-    player.legs.forEach((leg, i) => { leg.rotation.x = (i ? 1 : -1) * stride; });
-    player.arms.forEach((arm, i) => { arm.rotation.x = (i ? -1 : 1) * stride * .65; });
+function animatePlayer(player, state, speed, dt, won) {
+  if (!player.mixer) return;
+  const clip = won ? 'wave' : !state.grounded ? 'airborne' : speed > 14 ? 'walk' : 'idle';
+  const next = player.clips[clip];
+  if (player.action !== next) {
+    player.action?.fadeOut(.13);
+    next.reset().fadeIn(.13).play();
+    player.action = next;
   }
+  if (clip === 'walk') next.setEffectiveTimeScale(THREE.MathUtils.clamp(speed / 146, .55, 2.25));
+  player.mixer.update(dt);
 }
 
 function dragonModel() {
@@ -597,24 +802,37 @@ export function createRenderer(canvas, world, follow) {
       key.position.copy(key.target.position).add(lightingOffset);
       let support;
       for (const [index, platform] of platforms.entries()) {
-        const { x, y, z, w, d } = platformPosition(platform, time);
+        const at = platformPosition(platform, time);
+        const { x, y, z, w, d } = at;
         const { group, material, colour } = objects[index];
         group.position.set(x + w / 2, y, z + d / 2);
         material.color.copy(effects.slippery > 0 ? ice : colour);
-        if (state.y + 1 >= y && state.x > x && state.x < x + w && state.z > z && state.z < z + d) support = y;
+        if (state.x >= x && state.x <= x + w && state.z >= z && state.z <= z + d) {
+          const top = platformTop(at, state.x, state.z);
+          if (state.y + 1 >= top && (support === undefined || top > support.y)) support = { y: top, platform: at };
+        }
       }
 
-      const next = targetPlatform(game);
+      let next = targetPlatform(game);
+      if (next?.stairway) {
+        const lastTread = platforms.findLast((platform) => platform.stairway === next.stairway);
+        if (lastTread) next = lastTread;
+      }
       landing.visible = Boolean(next) && !game.won;
       if (landing.visible) {
-        const { x, y, z, w, d } = platformPosition(next, time);
-        landing.position.set(x + w / 2, y + 1.5, z + d / 2);
+        const at = platformPosition(next, time);
+        const x = at.x + at.w / 2, z = at.z + at.d / 2;
+        landing.position.set(x, platformTop(at, x, z) + 1.5, z);
+        if (at.slope) ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), rampNormal(at));
+        else ring.rotation.set(-Math.PI / 2, 0, 0);
         arrow.position.y = 26 + (reducedMotion ? 0 : Math.sin(time * 5) * 4);
       }
       shadow.visible = support !== undefined;
       if (shadow.visible) {
-        shadow.position.set(state.x, support + .95, state.z);
-        shadow.material.opacity = Math.max(.05, .28 - (state.y - support) / 340);
+        shadow.position.set(state.x, support.y + .95, state.z);
+        if (support.platform.slope) shadow.quaternion.setFromUnitVectors(THREE.Object3D.DEFAULT_UP, rampNormal(support.platform));
+        else shadow.quaternion.identity();
+        shadow.material.opacity = Math.max(.05, .28 - (state.y - support.y) / 340);
       }
 
       player.group.position.set(state.x, state.y, state.z);
@@ -623,7 +841,8 @@ export function createRenderer(canvas, world, follow) {
         facing.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, Math.atan2(state.vx, state.vz));
         player.body.quaternion.slerp(facing, 1 - Math.exp(-dt * 14));
       }
-      animatePlayer(player, state, speed, time, dt, game.won);      player.halo.visible = Boolean(effects.float || effects.boost || effects.bounce);
+      animatePlayer(player, state, speed, dt, game.won);
+      player.halo.visible = Boolean(effects.float || effects.boost || effects.bounce);
       player.halo.position.y = effects.float ? 12 + Math.sin(time * 5) * 7 : 4;
       player.halo.material.color.set(effects.float ? '#e2bcff' : effects.boost ? '#b2ffcd' : '#ffca7d');
 
