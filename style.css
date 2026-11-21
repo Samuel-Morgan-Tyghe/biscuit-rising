@@ -19,9 +19,9 @@ button { cursor: pointer; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 button:disabled { opacity: .65; cursor: wait; }
 .mast, main { width: min(100% - 40px, 1480px); margin: 0 auto; }
-.mast { display: flex; align-items: center; justify-content: space-between; min-height: 66px; gap: 16px; }
-.mast h1 { font-size: 1.52rem; letter-spacing: -.04em; }
-.mast nav { display: flex; flex-wrap: wrap; justify-content: end; gap: 8px 18px; }
+.mast { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; min-height: 66px; gap: 16px; }
+.mast h1 { grid-column: 2; font-size: 1.52rem; letter-spacing: -.04em; }
+.mast nav { grid-column: 3; display: flex; flex-wrap: wrap; justify-content: end; gap: 8px 18px; }
 .mast nav a { font-weight: 650; font-size: .85rem; }
 .wordmark { color: var(--paper); text-decoration: none; display: flex; align-items: center; gap: 10px; }
 .stamp { color: var(--accent); line-height: 1; }
@@ -64,6 +64,7 @@ kbd { background: var(--ink); padding: 1px 4px; border: 1px solid var(--line); b
 .effect strong, .effect small { display: block; }
 .effect strong { font-size: .86rem; }
 .effect small { font-size: .74rem; color: var(--muted); }
+.effect .gift-name { color: var(--accent); overflow-wrap: anywhere; }
 #last-gift { margin-top: 9px; overflow-wrap: anywhere; }
 .mappings summary { cursor: pointer; font-weight: 750; font-size: .88rem; }
 #mapping-fields { display: grid; gap: 7px; padding: 11px 0; }
@@ -88,8 +89,9 @@ code { color: var(--paper); overflow-wrap: anywhere; }
 }
 @media (max-width: 650px) {
   .mast, main { width: calc(100% - 20px); }
-  .mast { min-height: 55px; }
-  .mast nav { gap: 9px; }
+  .mast { grid-template-columns: 1fr; justify-items: center; min-height: 66px; gap: 4px; padding: 8px 0; }
+  .mast h1, .mast nav { grid-column: 1; }
+  .mast nav { justify-content: center; gap: 9px; }
   .mast nav a { font-size: .73rem; }
   .scoreboard { gap: 6px; padding: 8px; }
   .progress, .game-actions { gap: 6px; }

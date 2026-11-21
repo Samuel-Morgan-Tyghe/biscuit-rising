@@ -1,6 +1,6 @@
 import * as THREE from './vendor/three.module.min.js';
 import { GLTFLoader } from './vendor/gltf-loader.mjs';
-import { PLAYER_HEIGHT, platformTop } from './engine.mjs';
+import { LEVEL_COUNT, PLAYER_HEIGHT, platformTop } from './engine.mjs';
 
 const colours = {
   iron: '#233740', rails: '#60787a', bolts: '#d5d7bf', markings: '#f1bb63',
@@ -46,31 +46,6 @@ function random(seed) {
     seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
     return seed / 4294967296;
   };
-}
-
-function plaque(parent, words, x, y, z, w, h, accent = '#90e8d0') {
-  const image = document.createElement('canvas');
-  image.width = 512;
-  image.height = 128;
-  const ctx = image.getContext('2d');
-  ctx.fillStyle = '#18292c';
-  ctx.fillRect(0, 0, 512, 128);
-  ctx.strokeStyle = accent;
-  ctx.lineWidth = 4;
-  ctx.strokeRect(7, 7, 498, 114);
-  ctx.fillStyle = accent;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.font = 'bold 47px system-ui';
-  ctx.fillText(words, 256, 65, 465);
-  const texture = new THREE.CanvasTexture(image);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  const item = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: texture }));
-  item.position.set(x, y, z);
-  const reverse = item.clone();
-  reverse.rotation.y = Math.PI;
-  reverse.position.z -= .3;
-  parent.add(item, reverse);
 }
 
 const ridgeProfile = [
@@ -154,7 +129,7 @@ function mountainside(scene, rock) {
   return cliff;
 }
 
-function buildSupports(scene, platforms) {
+function buildSupports(scene, platforms, offsetY) {
   const group = new THREE.Group();
   const steel = '#33464b', paint = '#846340', reinforcement = '#52656a';
   const next = random(953);
@@ -165,7 +140,7 @@ function buildSupports(scene, platforms) {
     if (kind === 'stair') flights.add(stairway);
     const cx = x + w / 2, cz = z + d / 2;
     const centre = [cx, platformTop(platform, cx, cz) - thickness, cz];
-    const [rx, rz, a, b] = ridgeAt(y - 88);
+    const [rx, rz, a, b] = ridgeAt(y - 88 - offsetY);
     const t = Math.atan2(centre[2] - rz, centre[0] - rx);
     const ax = rx + .94 * a * Math.cos(t), az = rz + .94 * b * Math.sin(t);
     const reach = Math.hypot(centre[0] - ax, centre[2] - az);
@@ -198,8 +173,13 @@ function buildSupports(scene, platforms) {
     }
   }
 
+  scene.add(group);
+}
+
+function buildTrack(scene) {
+  const group = new THREE.Group();
+  const track = [[448, -164, 688], [486, 560, 571], [503, 1090, 622], [507, 1580, 679], [532, 2342, 750]];
   for (const side of [-1, 1]) {
-    const track = [[448, -164, 688], [486, 560, 571], [503, 1090, 622], [507, 1580, 679], [532, 2342, 750]];
     for (let i = 1; i < track.length; i++) {
       const shift = (point) => [point[0] + side * 8, point[1], point[2]];
       beam(group, shift(track[i - 1]), shift(track[i]), 4, '#556e70');
@@ -470,11 +450,16 @@ function salvageFace(group, style, w, d, thickness, colour) {
   }
 }
 
+const salvageDesigns = [...salvage.values()];
+
 function buildLedge(platform, textures) {
   const group = new THREE.Group();
-  const { kind, w, d, checkpoint, thickness } = platform;
+  const { kind, w, d, start, thickness } = platform;
   const longX = w >= d;
-  const design = !['floor', 'stair', 'ramp', 'bridge', 'flag'].includes(kind) ? salvage.get(platform.y) : null;
+  const piece = !['floor', 'stair', 'ramp', 'bridge', 'flag'].includes(kind);
+  const design = piece && (platform.designSeed === undefined
+    ? salvage.get(platform.visualY ?? platform.y)
+    : salvageDesigns[(platform.designSeed >>> 0) % salvageDesigns.length]);
   const surface = design?.[0] ?? (kind === 'bridge' ? 'wood' : kind === 'stair' || kind === 'ramp' ? 'stone' : 'iron');
   const [finish, trim] = design ? [design[1], design[2]] : [null, null];
   const girder = kind === 'wire';
@@ -487,6 +472,10 @@ function buildLedge(platform, textures) {
     color: colour, map, bumpMap: map, bumpScale: metal ? .17 : .7,
     metalness: metal ? .5 : 0, roughness: metal ? .61 : .94,
   });
+  if (platform.designSeed !== undefined) {
+    const hue = random(platform.designSeed)() - .5;
+    topMaterial.color.offsetHSL(hue * .17, 0, hue * .1);
+  }
   const lowerMaterial = topMaterial.clone();
   lowerMaterial.color.multiplyScalar(.74);
   const tile = surface === 'brick' ? 142 : surface === 'stone' ? 123 : surface === 'wood' ? 90 : 91;
@@ -521,15 +510,14 @@ function buildLedge(platform, textures) {
       }
     }
   }
-  if (checkpoint) {
+  if (start) {
     for (const side of [-1, 1]) {
       const x = side * (w / 2 - 12), z = -d / 2 + 12;
       box(group, colours.iron, 9, 38, 9, x, 19, z);
       box(group, new THREE.MeshBasicMaterial({ color: colours.beacon }), 6, 6, 6, x, 39, z);
     }
-    if (platform.zone) plaque(group, 'Checkpoint', 0, 19, -d / 2 + 5, Math.min(w * .43, 102), 24);
   }
-  return { group, material: topMaterial, colour: new THREE.Color(colour) };
+  return { group, material: topMaterial, colour: topMaterial.color.clone() };
 }
 
 function climber() {
@@ -550,7 +538,11 @@ function placeModel(source, parent, size, position, heading = 0) {
   const model = source.clone(true);
   const center = new THREE.Vector3().addVectors(min, max).multiplyScalar(.5);
   model.position.sub(new THREE.Vector3(center.x, min.y, center.z));
-  model.traverse((node) => { if (node.isMesh) node.castShadow = node.receiveShadow = true; });
+  model.traverse((node) => {
+    if (!node.isMesh) return;
+    node.castShadow = node.receiveShadow = true;
+    node.userData.sharedModel = true;
+  });
   fitted.add(model);
   fitted.scale.set(size[0] / bounds.x, size[1] / bounds.y, size[2] / bounds.z);
   fitted.position.set(...position);
@@ -575,7 +567,7 @@ function airborneClip(idle) {
   return new THREE.AnimationClip('airborne', .62, tracks);
 }
 
-function loadAssets(canvas, scene, player, objects, platforms) {
+function loadAssets(canvas, scene, player, addKit) {
   const loader = new GLTFLoader();
   const load = (name, place) => loader.loadAsync(`./assets/${name}.glb`)
     .then(place)
@@ -604,18 +596,8 @@ function loadAssets(canvas, scene, player, objects, platforms) {
     placeModel(model, scene, [160, 352, 112], [555, 1330, 540], -.71);
     placeModel(model, scene, [151, 299, 116], [497, 1987, 680], 2.8);
   });
-  const containers = load('box-large', ({ scene: model }) => {
-    for (const [index, { kind, w, d }] of platforms.entries()) {
-      if (kind !== 'crate' || platforms[index].y !== 510) continue;
-      placeModel(model, objects[index].group, [w * .94, platforms[index].thickness - 6, d + 2], [0, 5 - platforms[index].thickness, 0]);
-    }
-  });
-  const catwalks = load('catwalk-straight', ({ scene: model }) => {
-    for (const [index, { kind, w, d }] of platforms.entries()) {
-      if (kind !== 'catwalk' || platforms[index].y !== 820) continue;
-      placeModel(model, objects[index].group, [w, 8, d + 1], [0, -platforms[index].thickness, 0]);
-    }
-  });
+  const containers = load('box-large', ({ scene: model }) => addKit(510, model));
+  const catwalks = load('catwalk-straight', ({ scene: model }) => addKit(820, model));
   const cranes = load('models/overhead-crane', ({ scene: model }) => {
     placeModel(model, scene, [270, 80, 90], [449, 123, 460], -.12);
     placeModel(model, scene, [340, 100, 104], [512, 676, 367], .54);
@@ -632,12 +614,7 @@ function loadAssets(canvas, scene, player, objects, platforms) {
       placeModel(model, scene, [19, h, 19], [x, y, z], x * .11);
     }
   });
-  const conveyors = load('conveyor-bars-stripe', ({ scene: model }) => {
-    for (const [index, { kind, w, d }] of platforms.entries()) {
-      if (kind !== 'moving' || platforms[index].y !== 660) continue;
-      placeModel(model, objects[index].group, [w * .94, 8, d * .94], [0, -platforms[index].thickness, 0], Math.PI);
-    }
-  });
+  const conveyors = load('conveyor-bars-stripe', ({ scene: model }) => addKit(660, model));
   Promise.all([climber, rocks, containers, catwalks, cranes, generators, barrels, conveyors]).then((results) => {
     canvas.dataset.assets = results.includes(false) ? 'partial' : 'loaded';
   });
@@ -717,8 +694,21 @@ function blendSkySeam(sky) {
   sky.needsUpdate = true;
 }
 
+function disposeStage(stage) {
+  const reusable = new Set(materials.values());
+  const geometry = new Set(), stageMaterials = new Set();
+  stage.traverse((mesh) => {
+    if (!mesh.isMesh || mesh.userData.sharedModel) return;
+    if (![cube, sphere, cylinder].includes(mesh.geometry)) geometry.add(mesh.geometry);
+    if (reusable.has(mesh.material)) return;
+    stageMaterials.add(mesh.material);
+  });
+  stage.removeFromParent();
+  for (const resource of [...geometry, ...stageMaterials]) resource.dispose();
+}
+
 export function createRenderer(canvas, world, follow) {
-  const { platforms, goal, platformPosition, targetPlatform } = world;
+  const { platformPosition, targetPlatform } = world;
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.13;
@@ -749,15 +739,50 @@ export function createRenderer(canvas, world, follow) {
   scene.add(key, key.target);
 
   const textures = loadMaterialTextures();
-  const cliff = mountainside(scene, textures.stone);
-  buildSupports(scene, platforms);
-  const objects = platforms.map((platform) => buildLedge(platform, textures));
-  objects.forEach(({ group }) => scene.add(group));
+  const scenery = new THREE.Group();
+  scene.add(scenery);
+  const cliff = mountainside(scenery, textures.stone);
+  buildTrack(scenery);
   const player = climber();
   const dragon = dragonModel();
   scene.add(player.group, dragon.group);
-  loadAssets(canvas, scene, player, objects, platforms);
-  const flag = summitFlag(scene, goal);
+  const flag = summitFlag(scene, { x: 0, y: 0, z: 0 });
+  const kits = new Map();
+  const sunrise = new THREE.Color('#ffe1b0'), cloudline = new THREE.Color('#e3edff');
+  let level, terrain;
+  let objects = [];
+
+  function placeKit(height, model) {
+    if (!level || level.index >= 4) return;
+    const index = level.platforms.findIndex((p) => p.visualY === height && p.kind === ({ 510: 'crate', 660: 'moving', 820: 'catwalk' })[height]);
+    if (index < 0) return;
+    const { w, d, thickness } = level.platforms[index];
+    const size = height === 510 ? [w * .94, thickness - 6, d + 2] : [w * .95, 8, d];
+    placeModel(model, objects[index].group, size, [0, height === 510 ? 5 - thickness : -thickness, 0],
+      height === 660 ? Math.PI : 0);
+  }
+
+  loadAssets(canvas, scenery, player, (height, model) => {
+    kits.set(height, model);
+    placeKit(height, model);
+  });
+
+  function setLevel(next) {
+    if (level === next) return;
+    if (terrain) disposeStage(terrain);
+    level = next;
+    terrain = new THREE.Group();
+    const offsetY = level.baseY - level.visualBaseY;
+    scenery.position.y = offsetY;
+    scenery.updateMatrixWorld(true);
+    buildSupports(terrain, level.platforms, offsetY);
+    objects = level.platforms.map((platform) => buildLedge(platform, textures));
+    objects.forEach(({ group }) => terrain.add(group));
+    scene.add(terrain);
+    flag.parent.position.set(level.goal.x, level.goal.y, level.goal.z);
+    key.color.copy(sunrise).lerp(cloudline, level.index / (LEVEL_COUNT - 1));
+    for (const [height, model] of kits) placeKit(height, model);
+  }
   const lane = box(scene, new THREE.MeshBasicMaterial({ color: '#ff8754', transparent: true, opacity: .55, depthWrite: false }), 1, 2, 16);
   const disc = new THREE.CircleGeometry(1, 24);
   disc.rotateX(-Math.PI / 2);
@@ -778,6 +803,7 @@ export function createRenderer(canvas, world, follow) {
   const lightingOffset = new THREE.Vector3(-335, 520, 322);
 
   return {
+    setLevel,
     resize() {
       const { clientWidth, clientHeight } = canvas;
       if (!clientWidth || !clientHeight) return;
@@ -789,6 +815,8 @@ export function createRenderer(canvas, world, follow) {
       player.body.rotation.y = Math.PI;
     },
     draw(game, dt, reducedMotion) {
+      setLevel(game.level);
+      const { platforms } = game.level;
       const { player: state, effects, time } = game;
       follow.update(game, dt, reducedMotion);
       const camera = follow.camera;
@@ -818,7 +846,7 @@ export function createRenderer(canvas, world, follow) {
         const lastTread = platforms.findLast((platform) => platform.stairway === next.stairway);
         if (lastTread) next = lastTread;
       }
-      landing.visible = Boolean(next) && !game.won;
+      landing.visible = Boolean(next) && !game.levelComplete;
       if (landing.visible) {
         const at = platformPosition(next, time);
         const x = at.x + at.w / 2, z = at.z + at.d / 2;

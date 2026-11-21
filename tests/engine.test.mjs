@@ -1,16 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createGame, goal, platformPosition, platformTop, platforms, PLAYER_HEIGHT, PLAYER_WIDTH, respawn, step, targetPlatform, trigger } from "../engine.mjs";
+import { advanceLevel, createGame, LEVEL_COUNT, levels, platformPosition, platformTop, PLAYER_HEIGHT, PLAYER_WIDTH, WIDTH, DEPTH, step, targetPlatform, trigger } from "../engine.mjs";
 
 const dt = 1 / 120;
+const { platforms } = levels[0];
 
 function play(game, seconds, input = {}) {
   for (let frame = 0; frame < Math.round(seconds / dt); frame += 1) step(game, input, dt);
 }
 
-test("one continuous three-axis climb can reach the flag and save all four checkpoints", () => {
-  const game = createGame();
-  for (let transfer = 0; targetPlatform(game) && transfer < platforms.length; transfer += 1) {
+function standOn(game, platform) {
+  const position = platformPosition(platform, game.time);
+  const { x, y, z, w, d } = position;
+  game.lastPlatform = platform;
+  Object.assign(game.player, { x: x + w / 2, y, z: z + d / 2, vx: 0, vy: 0, vz: 0, grounded: platform });
+}
+
+function climb(game) {
+  for (let transfer = 0; targetPlatform(game) && transfer < game.level.platforms.length; transfer += 1) {
     const target = targetPlatform(game);
     let landed = false;
     const start = game.player.grounded;
@@ -25,23 +32,69 @@ test("one continuous three-axis climb can reach the flag and save all four check
       step(game, { left: across < -3, right: across > 3, front: depth > 3, back: depth < -3, jump: !walk && frame === 0 }, dt);
       const distance = Math.hypot(position.x + position.w / 2 - player.x, position.z + position.d / 2 - player.z);
       const advancedOnStairs = target.stairway !== undefined && player.grounded?.stairway === target.stairway && player.grounded.y > target.y;
-      if (game.won || advancedOnStairs || (player.grounded === target && distance < 19)) {
+      if (game.levelComplete || advancedOnStairs || (player.grounded === target && distance < 19)) {
         landed = true;
         break;
       }
     }
-    assert(landed, `missed ${target.kind} at ${target.y}`);
-    if (target.checkpoint) assert.equal(game.checkpoint, target);
+    assert(landed, `level ${game.level.index + 1} missed ${target.kind} at ${target.y}`);
   }
-  for (let frame = 0; frame < 120 && !game.won; frame += 1) {
-    step(game, {
-      left: game.player.x > goal.x, right: game.player.x < goal.x,
-      front: game.player.z < goal.z, back: game.player.z > goal.z,
-    }, dt);
+}
+
+test("all fifty stages are distinct, playable and strictly higher than the previous finish", () => {
+  const game = createGame();
+  assert.equal(levels.length, LEVEL_COUNT);
+  assert.equal(LEVEL_COUNT, 50);
+  assert.equal(advanceLevel(game), false);
+  assert.equal(createGame("length").level, levels[0]);
+  const layouts = new Set();
+  for (const level of levels) {
+    assert.equal(game.level, level);
+    if (level.index > 0) assert(level.spawn.y > levels[level.index - 1].goal.y);
+    const route = level.platforms;
+    assert(route.every(({ x, z, w, d }) => x >= 0 && z >= 0 && x + w <= WIDTH && z + d <= DEPTH));
+    if (level.index >= 4) assert(route.every(({ designSeed }) => Number.isInteger(designSeed)));
+    layouts.add(JSON.stringify(level.platforms.map(({ x, y, z, w, d, kind }) => [x, y - level.baseY, z, w, d, kind])));
+    climb(game);
+    assert.equal(game.levelComplete, true);
+    assert.equal(game.bestY, level.goal.y);
+    assert.equal(trigger(game, "dragon"), false);
+    assert.equal(game.won, level.index === LEVEL_COUNT - 1);
+    assert.equal(advanceLevel(game), level.index < LEVEL_COUNT - 1);
   }
-  assert.equal(game.bestY, goal.y);
+  assert.equal(layouts.size, LEVEL_COUNT);
+  assert.equal(game.level.index, LEVEL_COUNT - 1);
   assert.equal(game.won, true);
-  assert.equal(trigger(game, "dragon"), false);
+});
+
+test("late stages have higher, wider jumps and narrower landings with more moving obstacles", () => {
+  function metrics(group) {
+    const ledges = group.flatMap((level) => level.platforms.filter(({ kind }) =>
+      !["ramp", "stair", "bridge", "flag", "floor"].includes(kind)));
+    const meanWidth = ledges.reduce((sum, { w }) => sum + w, 0) / ledges.length;
+    let gap = 0, rise = 0, jumps = 0;
+    for (const level of group) {
+      let previous = level.platforms[0];
+      for (const ledge of level.platforms.filter((platform) => ledges.includes(platform))) {
+        const dx = ledge.x + ledge.w / 2 - (previous.x + previous.w / 2);
+        const dz = ledge.z + ledge.d / 2 - (previous.z + previous.d / 2);
+        gap += Math.abs(dx) > Math.abs(dz) ? Math.abs(dx) - (ledge.w + previous.w) / 2
+          : Math.abs(dz) - (ledge.d + previous.d) / 2;
+        rise += ledge.y - previous.y;
+        jumps += 1;
+        previous = ledge;
+      }
+    }
+    return { meanWidth, gap: gap / jumps, rise: rise / jumps, motion: ledges.filter(({ kind }) => kind === "moving").length };
+  }
+  const easy = metrics(levels.slice(4, 12));
+  const hard = metrics(levels.slice(-8));
+  assert(hard.meanWidth < easy.meanWidth - 25);
+  assert(hard.gap > easy.gap + 25);
+  assert(hard.rise > easy.rise + 8);
+  assert(hard.motion > easy.motion);
+  assert(Math.max(...levels[4].platforms.map(({ movementRate }) => movementRate)) <
+    Math.min(...levels.at(-1).platforms.map(({ movementRate }) => movementRate)));
 });
 
 test("the opening ledge needs forward movement as well as a jump", () => {
@@ -64,8 +117,7 @@ test("the opening ledge needs forward movement as well as a jump", () => {
 test("the full quarry staircase can be run up and down without jumping", () => {
   const game = createGame();
   const steps = platforms.filter(({ stairway }) => stairway === 65);
-  game.checkpoint = platforms[1];
-  respawn(game);
+  standOn(game, platforms[1]);
   game.player.x = steps[0].x + steps[0].w / 2;
   game.player.z = 708;
   const climbed = new Set();
@@ -86,8 +138,7 @@ test("the quarry ramp is a continuous uphill surface into a runnable bridge", ()
   const ramp = platforms.find(({ kind }) => kind === "ramp");
   const preceding = platforms[platforms.indexOf(ramp) - 1];
   const bridge = platforms[platforms.indexOf(ramp) + 1];
-  game.checkpoint = preceding;
-  respawn(game);
+  standOn(game, preceding);
   game.player.z = ramp.z + ramp.d / 2;
   const heights = new Set();
   for (let frame = 0; frame < 120; frame += 1) {
@@ -160,13 +211,14 @@ test("a fast fall lands on the first solid surface it hits", () => {
 });
 
 test("a moving lift pushes the player along its side and carries the player on top", () => {
-  const platform = platforms.find(({ kind }) => kind === "moving");
-  const startTime = (Math.ceil(platform.y * 0.028 / (2 * Math.PI)) * 2 * Math.PI - platform.y * 0.028) / 1.8;
+  const platform = levels[1].platforms.find(({ kind }) => kind === "moving");
+  const phase = platform.visualY * 0.028;
+  const startTime = (Math.ceil(phase / (2 * Math.PI)) * 2 * Math.PI - phase) / 1.8;
   const start = platformPosition(platform, startTime);
   const end = platformPosition(platform, startTime + 0.1);
   assert(end.x > start.x + 1);
 
-  const side = createGame();
+  const side = createGame(1);
   side.time = startTime;
   Object.assign(side.player, {
     x: start.x + start.w + PLAYER_WIDTH / 2 + 1,
@@ -175,10 +227,9 @@ test("a moving lift pushes the player along its side and carries the player on t
   step(side, {}, 0.1);
   assert(Math.abs(side.player.x - end.x - end.w - PLAYER_WIDTH / 2) < 1e-7);
 
-  const top = createGame();
+  const top = createGame(1);
   top.time = startTime;
-  top.checkpoint = platform;
-  respawn(top);
+  standOn(top, platform);
   step(top, {}, 0.1);
   assert(Math.abs(top.player.x - end.x - end.w / 2) < 1e-7);
   assert(Math.abs(top.player.z - end.z - end.d / 2) < 1e-7);
@@ -194,30 +245,37 @@ test("orbiting the camera rotates horizontal movement in world space", () => {
   assert(game.player.vx < -240);
 });
 
-test("the summit flag requires the player to reach its x and z position", () => {
+test("touching a level flag freezes the stage and unlocks precisely the next ascent", () => {
   const game = createGame();
-  game.checkpoint = platforms.at(-1);
-  respawn(game);
+  standOn(game, platforms.at(-1));
   game.player.z += 42;
   play(game, 0.1);
-  assert.equal(game.player.grounded, platforms.at(-1));
-  assert.equal(game.won, false);
-  play(game, 0.24, { back: true });
-  assert.equal(game.won, true);
+  assert.equal(game.levelComplete, false);
+  assert.equal(advanceLevel(game), false);
+  assert.equal(trigger(game, "boost"), true);
+  play(game, 0.13, { back: true });
+  assert.equal(game.levelComplete, true);
+  const arrival = { ...game.player };
+  play(game, 1, { right: true, jump: true });
+  assert.deepEqual(game.player, arrival);
+  assert.equal(advanceLevel(game), true);
+  assert.equal(game.level, levels[1]);
+  assert.equal(game.effects.boost, 0);
+  assert.equal(game.levelComplete, false);
+  assert.equal(game.player.y, levels[1].baseY);
+  assert.equal(advanceLevel(game), false);
 });
 
-test("falling returns to the latest checkpoint and the next jump works", () => {
-  const game = createGame();
-  const checkpoint = platforms.find((platform) => platform.checkpoint && platform.zone === 2);
-  game.checkpoint = checkpoint;
-  respawn(game);
+test("falling restarts the same level at its entrance and the next jump works", () => {
+  const game = createGame(13);
+  const { level } = game;
   for (let frame = 0; frame < 360 && !game.notice; frame += 1) {
-    step(game, { left: true }, dt);
+    step(game, { front: true }, dt);
   }
-  assert.equal(game.notice, "Back at your checkpoint");
-  assert.equal(game.checkpoint, checkpoint);
-  assert.equal(game.player.grounded, checkpoint);
-  assert.equal(game.player.z, checkpoint.z + checkpoint.d / 2);
+  assert.equal(game.notice, "Back at the level start");
+  assert.equal(game.level, level);
+  assert.equal(game.player.grounded, level.platforms[0]);
+  assert.equal(game.player.z, level.spawn.z);
   const feet = game.player.y;
   play(game, 0.12, { jump: true });
   assert(game.player.y > feet + 50);
@@ -271,11 +329,11 @@ test("slippery surfaces preserve momentum and boosted jumps add height", () => {
 });
 
 test("levitation lasts ten seconds and releasing it puts the player back under gravity", () => {
-  const game = createGame();
+  const game = createGame(3);
   trigger(game, "float");
   assert.equal(game.effects.float, 10);
   play(game, 9.95);
-  assert(game.player.y > 800);
+  assert(game.player.y > game.level.baseY + 800);
   assert(game.player.vy > 0);
   play(game, 0.25);
   assert.equal(game.effects.float, 0);

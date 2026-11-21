@@ -1,6 +1,6 @@
 # Skybreak
 
-Skybreak is a solo third-person 3D climb from a quarry above the clouds to a summit flag. Run up stone stairs and ramps, cross timber bridges and jump between concrete blocks, brickwork and steel girders on one continuous mountainside. Falling costs height and carries no damage. Touch the summit flag to finish.
+Skybreak is a solo third-person 3D climb through **50 levels** above the clouds. Run up stone stairs and ramps, cross timber bridges and jump between construction obstacles. Touch each finish flag and choose **Ascend** to move higher. Later levels narrow the landings, widen the gaps and introduce more moving obstacles. Falls return you to the start of your current level without damage.
 
 ## Play the game
 
@@ -8,13 +8,14 @@ Skybreak is a solo third-person 3D climb from a quarry above the clouds to a sum
 
 - Move with **WASD** or the **arrow keys**, relative to the camera. Jump with **Space**. Drag on the game or use **Q / E** to orbit, and press **R** to face the route. Touch screens have on-screen movement and jump controls.
 - Aim for the mint marker on the next ledge. Ledges are solid, so jump around their edges and land on top. Use your shadow to judge how far forward or back you need to move. The game requires WebGL 2.
-- Try the gift simulator to see what every effect does. You can practise the climb and simulate gifts before opening TikFinity.
+- The current level is saved in this browser when you ascend. Restart takes you back to the start of that level.
+- Try the gift simulator before opening TikFinity. The gift panel shows the assignments for your current level.
 
 ## Connect your TikTok LIVE
 
 1. Install and open the **TikFinity Desktop App for Windows** on the PC running the game. Complete [TikFinity Setup](https://tikfinity.com/app/setup) and connect your own TikTok account there. Start your TikTok LIVE and connect TikFinity to that stream.
 2. Open Skybreak in your browser on the same computer. Use the game's TikFinity connection button. If the browser asks for local network access, allow it for the game. A connected status confirms that the game can reach the desktop app. Check separately that your LIVE is connected inside TikFinity.
-3. In the game’s gift settings, enter the gift names available in your LIVE and choose an effect for each. The names are matched without regard to case. Gifts with no matching entry are ignored.
+3. In the gift settings, assign the gift names available in your LIVE. The editor sets their Level 1 effects. Every level has a different set of assignments, shown in the gift panel. Names match without regard to case. Leave a slot blank to disable that gift.
 4. Use the in-game simulator to rehearse the effects without spending coins. Then check that a gift received on your LIVE appears in the game and triggers its mapped effect. A gift streak applies its effect when the streak ends.
 5. Capture the game browser window in OBS or TikTok LIVE Studio. Keep the game focused while you play.
 
@@ -28,7 +29,7 @@ Some browsers restrict connections from a public page to a local WebSocket. Run 
 2. On Windows with [Python 3](https://www.python.org/downloads/) installed, double-click `play-local.cmd` inside the extracted folder. To run the local practice edition on macOS or Linux, open a terminal in the extracted folder and run `python3 -m http.server 8000 --bind 127.0.0.1`.
 3. Open `http://127.0.0.1:8000/` in your browser. Leave the server window open while you play, and connect to TikFinity from this local copy. Use **Ctrl+C** in the server window to stop it when finished.
 
-Gift settings saved on the published page belong to that browser origin. Enter them again on the local page.
+Level progress and gift settings belong to the browser origin, so the hosted and local copies save independently.
 
 ## Visual assets
 

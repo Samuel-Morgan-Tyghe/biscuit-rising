@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="A solo third-person climb through abandoned skyworks, with optional TikFinity gift effects.">
+  <meta name="description" content="A solo third-person climb through 50 levels of abandoned skyworks, with optional TikFinity gift effects.">
   <meta name="theme-color" content="#0d141e">
   <title>Skybreak</title>
   <link rel="stylesheet" href="./style.css">
@@ -21,12 +21,12 @@
     <section class="game-shell" aria-label="Skybreak game">
       <div class="scoreboard">
         <div class="progress">
-          <div><small>Section</small><strong id="zone">Quarry entrance</strong></div>
+          <div aria-live="polite"><small id="level-count">Level 1 of 50</small><strong id="zone">Quarry entrance</strong></div>
           <div class="height"><small>Best height</small><strong id="altitude">0 m</strong></div>
         </div>
         <div class="game-actions">
           <button class="quiet" id="align-camera" type="button" title="Face next ledge (R)">Face route</button>
-          <button class="quiet" id="restart" type="button">Restart</button>
+          <button class="quiet" id="restart" type="button">Restart level</button>
           <button class="quiet" id="fullscreen" type="button" hidden>Full screen</button>
         </div>
       </div>
@@ -37,11 +37,11 @@
           <p>Open the game in a browser with WebGL 2 and hardware acceleration, then reload.</p>
         </div>
         <div class="notice" id="notice" aria-live="polite" hidden></div>
-        <div class="finish" id="finish" hidden>
+        <div class="finish" id="finish" role="region" aria-labelledby="finish-title" hidden>
           <span aria-hidden="true">◈</span>
-          <h2>Summit reached</h2>
-          <p>You climbed all the way to the flag.</p>
-          <button class="primary" id="again" type="button">Play again</button>
+          <h2 id="finish-title"></h2>
+          <p id="finish-detail"></p>
+          <button class="primary" id="again" type="button"></button>
         </div>
       </div>
       <div class="controls" aria-label="Game controls">
@@ -62,14 +62,14 @@
         <button class="primary" id="connect" type="button">Connect</button>
       </section>
       <section class="panel gifts">
-        <h2>Gift effects</h2>
-        <p>Test any effect for free while you climb.</p>
+        <h2 id="gift-level">Level 1 gifts</h2>
+        <p>Assignments change with each level. Test any effect for free.</p>
         <div id="effects"></div>
         <p id="last-gift" role="status">Waiting for a gift or test.</p>
       </section>
       <details class="panel mappings">
-        <summary>Change gift mappings</summary>
-        <p>Enter the gift names exactly as TikFinity reports them. A blank field disables the live trigger for that effect.</p>
+        <summary>Change gift names</summary>
+        <p>These are the level 1 assignments. Enter the names TikFinity reports. Leave a field blank to disable that slot.</p>
         <form id="mappings">
           <div id="mapping-fields"></div>
           <button class="primary" type="submit">Save mappings</button>

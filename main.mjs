@@ -1,5 +1,6 @@
-import { WIDTH, DEPTH, platforms, zones, goal, createGame, step, trigger, platformPosition, targetPlatform } from './engine.mjs';
+import { WIDTH, DEPTH, LEVEL_COUNT, advanceLevel, createGame, step, trigger, platformPosition, targetPlatform } from './engine.mjs';
 import { DEFAULT_GIFTS, createTikFinity } from './tikfinity.mjs';
+import { giftMappingsForLevel } from './level-gifts.mjs';
 import { createRenderer } from './render.mjs';
 import { createFollowCamera } from './camera.mjs';
 
@@ -16,11 +17,22 @@ const effects = {
 const $ = (id) => document.getElementById(id);
 const canvas = $('game');
 const follow = createFollowCamera();
-let game = createGame();
-follow.reset(game);
+const progressKey = 'skybreak-level';
+let savedLevel = 0;
+try {
+  const index = Number(localStorage.getItem(progressKey));
+  if (Number.isInteger(index) && index >= 0 && index < LEVEL_COUNT) savedLevel = index;
+} catch {
+  // Play remains available when browser storage is blocked.
+}
+let game = createGame(savedLevel);
+if (game.level.index === 0) follow.reset(game);
+else alignRoute();
 let renderer;
 try {
-  renderer = createRenderer(canvas, { width: WIDTH, depth: DEPTH, platforms, zones, goal, platformPosition, targetPlatform }, follow);
+  const { platforms, goal } = game.level;
+  renderer = createRenderer(canvas, { width: WIDTH, depth: DEPTH, platforms, goal, platformPosition, targetPlatform }, follow);
+  renderer.setLevel?.(game.level);
   canvas.dataset.renderer = '3d';
 } catch (error) {
   console.error(error);
@@ -39,6 +51,7 @@ let jumpQueued = false;
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
 let status = 'offline';
 let mappings = { ...DEFAULT_GIFTS };
+const giftLabels = {};
 
 try {
   const saved = JSON.parse(localStorage.getItem('biscuit-rising-gifts'));
@@ -68,25 +81,33 @@ const connection = createTikFinity({
       : `Last gift: ${giftName} ×${count} from ${sender}`;
   },
   onGift({ effect, giftName, count, simulated }) {
-    const applied = trigger(game, effect);
+    const applied = !game.levelComplete && trigger(game, effect);
     $('last-gift').textContent = applied
       ? `${simulated ? 'Test' : count > 1 ? `${giftName} ×${count}` : giftName} triggered ${effects[effect].name}.`
       : `${effects[effect].name} is unavailable right now.`;
   },
 });
-connection.setMappings(mappings);
+
+function applyGiftMappings() {
+  const active = giftMappingsForLevel(mappings, game.level.index);
+  connection.setMappings(active);
+  for (const id of Object.keys(effects)) setText(giftLabels[id], active[id] || 'No live gift assigned');
+}
 
 for (const [id, effect] of Object.entries(effects)) {
   const row = document.createElement('div');
   row.className = 'effect';
   row.innerHTML = `<span class="icon" aria-hidden="true">${effect.icon}</span>
-    <div><strong>${effect.name}</strong><small>${effect.text}</small></div>
+    <div><strong>${effect.name}</strong><small>${effect.text}</small><small class="gift-name"></small></div>
     <button type="button" class="test" aria-label="Test ${effect.name}">Test</button>`;
   row.style.setProperty('--tint', effect.colour);
+  giftLabels[id] = row.querySelector('.gift-name');
   row.querySelector('button').addEventListener('click', () => {
     if (!connection.simulate(id)) {
-      trigger(game, id);
-      $('last-gift').textContent = `Tested ${effect.name}. No live gift assigned.`;
+      const applied = !game.levelComplete && trigger(game, id);
+      $('last-gift').textContent = applied
+        ? `Tested ${effect.name}. No live gift assigned.`
+        : `${effect.name} is unavailable right now.`;
     }
     if (renderer) {
       gameShell.scrollIntoView({ block: 'start' });
@@ -104,6 +125,7 @@ for (const [id, effect] of Object.entries(effects)) {
   field.append(input);
   $('mapping-fields').append(field);
 }
+updateLevelView();
 
 $('mappings').addEventListener('submit', (event) => {
   event.preventDefault();
@@ -114,7 +136,7 @@ $('mappings').addEventListener('submit', (event) => {
     return;
   }
   mappings = next;
-  connection.setMappings(mappings);
+  applyGiftMappings();
   try {
     localStorage.setItem('biscuit-rising-gifts', JSON.stringify(mappings));
     $('mapping-status').textContent = 'Gift mappings saved.';
@@ -144,20 +166,49 @@ if (document.fullscreenEnabled) {
   });
 }
 
-function restart() {
-  game = createGame();
-  follow.reset(game);
+function updateLevelView() {
+  const number = game.level.index + 1;
+  setText($('level-count'), `Level ${number} of ${LEVEL_COUNT}`);
+  setText($('zone'), game.level.name);
+  setText($('altitude'), `${Math.floor(game.bestY / 10)} m`);
+  setText($('gift-level'), `Level ${number} gifts`);
+  applyGiftMappings();
+}
+
+function enterLevel() {
+  if (game.level.index === 0) follow.reset(game);
+  else alignRoute();
+  renderer?.setLevel?.(game.level);
   renderer?.reset?.();
-  held.clear();
-  jumpQueued = false;
+  clearInputs();
+  $('finish').hidden = true;
+  setText($('last-gift'), 'Waiting for a gift or test.');
+  updateLevelView();
   canvas.focus({ preventScroll: true });
 }
-$('restart').addEventListener('click', restart);
-$('again').addEventListener('click', restart);
+$('restart').addEventListener('click', () => {
+  const bestY = game.bestY;
+  game = createGame(game.level.index);
+  game.bestY = Math.max(bestY, game.bestY);
+  enterLevel();
+});
+$('again').addEventListener('click', () => {
+  if (game.won) game = createGame();
+  else if (!advanceLevel(game)) return;
+  try {
+    localStorage.setItem(progressKey, String(game.level.index));
+  } catch {
+    // The current run still advances when storage is blocked.
+  }
+  enterLevel();
+});
 
 function alignRoute() {
   const next = targetPlatform(game);
-  if (!next) return;
+  if (!next) {
+    follow.reset(game);
+    return;
+  }
   const ledge = platformPosition(next, game.time);
   const { x, z } = game.player;
   follow.reset(game, Math.atan2(x - ledge.x - ledge.w / 2, z - ledge.z - ledge.d / 2));
@@ -190,7 +241,7 @@ for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
 }
 
 window.addEventListener('keydown', (event) => {
-  if (game.won || event.ctrlKey || event.metaKey || event.altKey || event.target.closest?.('button, input, a, summary')) return;
+  if (game.levelComplete || game.won || event.ctrlKey || event.metaKey || event.altKey || event.target.closest?.('button, input, a, summary')) return;
   const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
   if (key === 'r') {
     event.preventDefault();
@@ -205,11 +256,12 @@ window.addEventListener('keydown', (event) => {
 window.addEventListener('keyup', (event) => {
   held.delete(event.key.length === 1 ? event.key.toLowerCase() : event.key);
 });
-window.addEventListener('blur', () => {
+function clearInputs() {
   held.clear();
   jumpQueued = false;
   for (const button of document.querySelectorAll('[data-control]')) button.dataset.held = 'false';
-});
+}
+window.addEventListener('blur', clearInputs);
 
 for (const button of document.querySelectorAll('[data-control]')) {
   button.addEventListener('pointerdown', (event) => {
@@ -248,22 +300,22 @@ function frame(now) {
     remaining -= 1 / 120;
   }
 
-  const zoneIndex = zones.findLastIndex(({ y }) => game.player.y >= y);
-  const zone = zones[Math.max(0, zoneIndex)];
   renderer.draw(game, dt, reduceMotion.matches);
-  setText($('zone'), zone.name);
   setText($('altitude'), `${Math.floor(game.bestY / 10)} m`);
   const active = Object.entries(game.effects).filter(([, duration]) => duration > 0)
     .map(([id, duration]) => `${effects[id].name} ${Math.ceil(duration)}s`);
   const warning = game.dragon?.phase === 'warning' ? 'Dragon incoming. Jump or dodge.' : '';
   const notice = warning || game.notice || active.join(' / ');
-  $('notice').hidden = !notice || game.won;
+  $('notice').hidden = !notice || game.levelComplete || game.won;
   setText($('notice'), notice || '');
-  if (game.won && $('finish').hidden) {
+  if ((game.levelComplete || game.won) && $('finish').hidden) {
+    clearInputs();
+    setText($('finish-title'), game.won ? 'Summit reached' : `Level ${game.level.index + 1} cleared`);
+    setText($('finish-detail'), game.won ? `You climbed all ${LEVEL_COUNT} levels.` : 'The next level has new gift effects.');
+    setText($('again'), game.won ? 'Play again' : `Ascend to level ${game.level.index + 2}`);
     $('finish').hidden = false;
     $('again').focus({ preventScroll: true });
   }
-  if (!game.won) $('finish').hidden = true;
   requestAnimationFrame(frame);
 }
 if (renderer) requestAnimationFrame(frame);
