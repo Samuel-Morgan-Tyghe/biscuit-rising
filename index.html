@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="A British snack-aisle platformer with gift-powered chaos for TikTok LIVE.">
+  <meta name="description" content="A 3D British snack-aisle platformer with gift-powered chaos for TikTok LIVE.">
   <meta name="theme-color" content="#181123">
   <title>Biscuit Rising</title>
   <link rel="stylesheet" href="./style.css">
@@ -17,7 +17,7 @@
   <main>
     <div class="intro">
       <h1>Biscuit <em>Rising</em></h1>
-      <p>Climb from the biscuit tin to the summit flag. Your TikTok LIVE viewers can make a right mess of it.</p>
+      <p>Climb a 3D stack of biscuits, fizzy pop and rail chaos. Your TikTok LIVE viewers can make a right mess of it.</p>
     </div>
     <div class="layout">
       <section class="game-shell" aria-label="Biscuit Rising game">
@@ -28,7 +28,11 @@
           <button class="quiet" id="fullscreen" type="button" hidden>Full screen</button>
         </div>
         <div class="stage">
-          <canvas id="game" tabindex="0" aria-label="Platformer game. Use arrow keys or A and D to move. Press Space, W or Up to jump."></canvas>
+          <canvas id="game" tabindex="0" aria-label="3D platformer. Use WASD or the arrow keys to move in any direction. Press Space to jump. Aim for the ring on the next ledge."></canvas>
+          <div class="finish graphics-error" id="graphics-error" role="alert" hidden>
+            <h2>3D graphics unavailable</h2>
+            <p>Open the game in a browser with WebGL 2 and hardware acceleration, then reload.</p>
+          </div>
           <div class="notice" id="notice" aria-live="polite" hidden></div>
           <div class="finish" id="finish" hidden>
             <span aria-hidden="true">🏁</span>
@@ -38,10 +42,14 @@
           </div>
         </div>
         <div class="controls" aria-label="Game controls">
-          <div><button data-control="left" type="button" aria-label="Move left">←</button>
-          <button data-control="right" type="button" aria-label="Move right">→</button></div>
-          <span>A / D to move, Space to jump</span>
-          <button data-control="jump" type="button" aria-label="Jump">↑ Jump</button>
+          <div class="direction-pad">
+            <button data-control="left" type="button" aria-label="Move left">←</button>
+            <button data-control="back" type="button" aria-label="Move forward">↑</button>
+            <button data-control="front" type="button" aria-label="Move backward">↓</button>
+            <button data-control="right" type="button" aria-label="Move right">→</button>
+          </div>
+          <span>WASD or arrows to move, Space to jump</span>
+          <button data-control="jump" type="button">Jump</button>
         </div>
       </section>
       <aside class="side" aria-label="TikFinity controls">

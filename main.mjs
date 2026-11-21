@@ -1,9 +1,9 @@
-import { WIDTH, PLAYER_WIDTH, PLAYER_HEIGHT, platforms, zones, goal, createGame, step, trigger, platformPosition } from './engine.mjs';
+import { WIDTH, DEPTH, platforms, zones, goal, createGame, step, trigger, platformPosition, targetPlatform } from './engine.mjs';
 import { DEFAULT_GIFTS, createTikFinity } from './tikfinity.mjs';
-import { drawWorld } from './render.mjs';
+import { createRenderer } from './render.mjs';
 
 const effects = {
-  dragon: { name: 'Dragon fly-by', icon: '🐉', colour: '#ffac94', text: 'Jump over the swoop' },
+  dragon: { name: 'Dragon fly-by', icon: '🐉', colour: '#ffac94', text: 'Jump or dodge the swoop' },
   slippery: { name: 'Butter fingers', icon: '🧈', colour: '#ffe881', text: 'Lose your grip' },
   boost: { name: 'Biscuit boost', icon: '⚡', colour: '#ecff87', text: 'Jump higher and further' },
   float: { name: 'Tea-powered levitation', icon: '🫖', colour: '#d9b8ff', text: 'Float for 10 seconds' },
@@ -14,13 +14,24 @@ const effects = {
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game');
-const context = canvas.getContext('2d');
+let renderer;
+try {
+  renderer = createRenderer(canvas, { width: WIDTH, depth: DEPTH, platforms, zones, goal, platformPosition, targetPlatform });
+  canvas.dataset.renderer = '3d';
+} catch (error) {
+  console.error(error);
+  $('graphics-error').hidden = false;
+}
+canvas.addEventListener('webglcontextlost', () => { $('graphics-error').hidden = false; });
+canvas.addEventListener('webglcontextrestored', () => { $('graphics-error').hidden = true; });
 const gameShell = canvas.closest('.game-shell');
-const controls = { left: false, right: false, jump: false };
-const keys = { ArrowLeft: 'left', a: 'left', ArrowRight: 'right', d: 'right', ArrowUp: 'jump', w: 'jump', ' ': 'jump' };
+const controls = { left: false, right: false, front: false, back: false, jump: false };
+const keys = {
+  ArrowLeft: 'left', a: 'left', ArrowRight: 'right', d: 'right',
+  ArrowUp: 'back', w: 'back', ArrowDown: 'front', s: 'front', ' ': 'jump',
+};
 const held = new Set();
 let jumpQueued = false;
-const view = { height: 720, bottom: -24, rotation: 0, scale: 1 };
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
 let game = createGame();
 let status = 'offline';
@@ -129,8 +140,7 @@ if (document.fullscreenEnabled) {
 
 function restart() {
   game = createGame();
-  view.bottom = -24;
-  view.rotation = 0;
+  renderer?.reset();
   held.clear();
   jumpQueued = false;
   canvas.focus({ preventScroll: true });
@@ -139,7 +149,7 @@ $('restart').addEventListener('click', restart);
 $('again').addEventListener('click', restart);
 
 window.addEventListener('keydown', (event) => {
-  if (game.won || event.ctrlKey || event.metaKey || event.altKey || event.target.closest('button, input, a, summary')) return;
+  if (game.won || event.ctrlKey || event.metaKey || event.altKey || event.target.closest?.('button, input, a, summary')) return;
   const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
   if (!keys[key]) return;
   event.preventDefault();
@@ -168,14 +178,7 @@ for (const button of document.querySelectorAll('[data-control]')) {
   }
 }
 
-new ResizeObserver(() => {
-  const rect = canvas.getBoundingClientRect();
-  const pixelRatio = Math.min(devicePixelRatio, 2);
-  canvas.width = Math.round(rect.width * pixelRatio);
-  canvas.height = Math.round(rect.height * pixelRatio);
-  view.scale = canvas.width / WIDTH;
-  view.height = canvas.height / view.scale;
-}).observe(canvas);
+if (renderer) new ResizeObserver(() => renderer.resize()).observe(canvas);
 
 function setText(element, text) {
   if (element.textContent !== text) element.textContent = text;
@@ -196,21 +199,15 @@ function frame(now) {
     remaining -= 1 / 120;
   }
 
-  const target = Math.max(-24, Math.min(goal.y + 330 - view.height, game.player.y - view.height * .32));
-  view.bottom += (target - view.bottom) * Math.min(1, dt * 8);
-  const rotation = game.effects.flip > 0 ? Math.PI : 0;
-  view.rotation = reduceMotion.matches ? rotation : view.rotation + (rotation - view.rotation) * Math.min(1, dt * 20);
-
   const zoneIndex = zones.findLastIndex(({ y }) => game.player.y >= y);
   const zone = zones[Math.max(0, zoneIndex)];
-  drawWorld(context, view, game, {
-    width: WIDTH, playerWidth: PLAYER_WIDTH, playerHeight: PLAYER_HEIGHT, platforms, zones, goal, platformPosition,
-  });
+  renderer.draw(game, dt, reduceMotion.matches);
   setText($('zone'), zone.name);
   setText($('altitude'), `${Math.floor(game.bestY / 10)} m`);
   const active = Object.entries(game.effects).filter(([, duration]) => duration > 0)
     .map(([id, duration]) => `${effects[id].name} ${Math.ceil(duration)}s`);
-  const notice = game.notice || active.join(' / ');
+  const warning = game.dragon?.phase === 'warning' ? 'Dragon incoming. Jump or dodge.' : '';
+  const notice = warning || game.notice || active.join(' / ');
   $('notice').hidden = !notice || game.won;
   setText($('notice'), notice || '');
   if (game.won && $('finish').hidden) {
@@ -220,4 +217,4 @@ function frame(now) {
   if (!game.won) $('finish').hidden = true;
   requestAnimationFrame(frame);
 }
-requestAnimationFrame(frame);
+if (renderer) requestAnimationFrame(frame);

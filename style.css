@@ -84,3 +84,6 @@ code { color: var(--paper); overflow-wrap: anywhere; }
 .game-shell:fullscreen { display: flex; flex-direction: column; margin: auto; max-width: min(100%, 92vh); border-radius: 0; }
 .game-shell:fullscreen .stage { flex: 1; min-height: 0; }
 .game-shell::backdrop { background: #181123; }
+.direction-pad { flex-shrink: 0; }
+.graphics-error h2 { font-size: clamp(1.5rem, 5vw, 2.75rem); }
+.graphics-error p { max-width: 32ch; }

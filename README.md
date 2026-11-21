@@ -1,10 +1,13 @@
 # Biscuit Rising
 
-Biscuit Rising is a single-level platformer where you climb from the biscuit tin to the summit flag. Falls cost height. Touching the flag finishes the run. TikTok LIVE viewers can change the physics, send in a dragon or turn the world upside down.
+Biscuit Rising is a single-level 3D platformer where you climb from the biscuit tin to the summit flag. Falls cost height. Touching the flag finishes the run. TikTok LIVE viewers can change the physics, send in a dragon or turn the world upside down.
 
 ## Play the game
 
-- Move with **A / D** or **← / →**. Jump with **Space**, **W** or **↑**. On a touch screen, use the on-screen buttons.
+[Play Biscuit Rising in your browser](https://samuel-morgan-tyghe.github.io/biscuit-rising/).
+
+- Move sideways with **A / D** or **← / →**. Move into and out of the scene with **W / S** or **↑ / ↓**. Jump with **Space**. On a touch screen, use the on-screen movement and jump buttons.
+- Aim for the lime marker on the next ledge. Use your shadow to judge how far forward or back you need to move. The game requires WebGL 2.
 - Try the gift simulator to see what every effect does. You can practise the climb and simulate gifts before opening TikFinity.
 
 ## Connect your TikTok LIVE
@@ -29,4 +32,4 @@ Gift settings saved on the published page belong to that browser origin. Enter t
 
 ## Run the checks
 
-With Node.js installed, run `node --test` from the project folder. The game itself uses static files and needs no JavaScript package installation.
+With Node.js installed, run `node --test` from the project folder. The game serves static files and needs no JavaScript package installation. The [Three.js r187](https://github.com/mrdoob/three.js/releases/tag/r187) runtime is bundled in `vendor/` under the [MIT licence](vendor/LICENSE.three.txt), so the local game can load without an internet connection. To rebuild the bundle, pack `three@0.187.0` with npm, extract it, and run `npx esbuild@0.25.0 package/build/three.module.js --bundle --format=esm --minify --legal-comments=inline --outfile=vendor/three.module.min.js`.
