@@ -14,7 +14,7 @@
 [hidden] { display: none !important; }
 body, h1, h2, p { margin: 0; }
 a { color: var(--accent); text-underline-offset: .24em; }
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 button { cursor: pointer; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 button:disabled { opacity: .65; cursor: wait; }
@@ -30,8 +30,11 @@ main { padding-bottom: 56px; }
 .game-shell { position: relative; isolation: isolate; overflow: hidden; }
 .scoreboard { display: flex; align-items: start; justify-content: space-between; gap: 10px; }
 .progress, .game-actions { display: flex; gap: 12px; }
-.progress { align-items: center; }
+.progress { align-items: center; min-width: 0; }
 .game-actions { align-items: start; }
+.level-picker { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.level-picker small { white-space: nowrap; }
+.level-picker select { min-width: 0; width: clamp(130px, 18vw, 230px); color: var(--paper); background: #263445; border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font-size: .82rem; }
 .scoreboard small { display: block; color: var(--muted); font-size: .69rem; }
 .scoreboard strong { display: block; margin-top: 2px; font-size: .91rem; }
 .height { text-align: right; font-variant-numeric: tabular-nums; }
@@ -93,12 +96,17 @@ code { color: var(--paper); overflow-wrap: anywhere; }
   .mast h1, .mast nav { grid-column: 1; }
   .mast nav { justify-content: center; gap: 9px; }
   .mast nav a { font-size: .73rem; }
-  .scoreboard { gap: 6px; padding: 8px; }
-  .progress, .game-actions { gap: 6px; }
+  .scoreboard { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 8px; }
+  .progress { align-items: start; justify-content: space-between; gap: 6px; }
+  .height strong { white-space: nowrap; }
+  .level-picker { grid-column: 2; grid-row: 1; display: grid; gap: 2px; }
+  .level-picker select { width: 100%; }
+  .game-actions { grid-column: 1 / -1; gap: 6px; }
+  .game-actions button { flex: 1; }
   .scoreboard small { font-size: .61rem; }
   .scoreboard strong { font-size: .74rem; }
   .scoreboard button { padding: 6px; font-size: .69rem; }
-  .stage { height: clamp(345px, calc(100svh - 170px), 660px); }
+  .stage { height: clamp(330px, calc(100svh - 204px), 660px); }
   .controls { gap: 6px; padding: 8px; }
   .controls button { min-width: 38px; min-height: 40px; }
   .keyboard-help { display: none; }

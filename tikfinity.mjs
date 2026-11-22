@@ -41,8 +41,8 @@ function decodeGift(message) {
 }
 
 export function createTikFinity({ onGift, onSeenGift = () => {}, onStatus = () => {},
-  WebSocketClass = globalThis.WebSocket }) {
-  const effects = Object.keys(DEFAULT_GIFTS);
+  WebSocketClass = globalThis.WebSocket, effectIds = Object.keys(DEFAULT_GIFTS) }) {
+  const effects = [...effectIds];
   const seen = new Set();
   let mappings = DEFAULT_GIFTS;
   let socket;

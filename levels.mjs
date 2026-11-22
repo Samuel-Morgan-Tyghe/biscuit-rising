@@ -40,7 +40,7 @@ const sections = [
       [724, 510, 220, "crate", 175, 160],
       ...stairs("x", 794, 634, 240, 72, 510, 577),
       [560, 577, 148, "crate", 230, 127],
-      [450, 660, 108, "moving", 249, 105],
+      [450, 670, 108, "moving", 249, 105, { visualY: 660 }],
       [290, 741, 159, "crate", 273, 139],
       [196, 820, 93, "catwalk", 397, 180],
       [202, 888, 112, "wobble", 565, 113],
@@ -58,11 +58,11 @@ const sections = [
       [708, 1310, 111, "moving", 311, 101],
       [565, 1402, 129, "wire", 284, 49],
       [402, 1485, 124, "deck", 317, 112],
-      [295, 1578, 99, "wobble", 422, 116],
+      [295, 1580, 99, "wobble", 422, 116, { visualY: 1578 }],
     ],
   },
   {
-    name: "Cloudline summit",
+    name: "Cloudline crossing",
     ledges: [
       [280, 1658, 184, "cloud", 577, 171],
       [401, 1748, 121, "cloud", 713, 108],
@@ -71,8 +71,8 @@ const sections = [
       [806, 2017, 72, "wire", 575, 135],
       [744, 2111, 111, "cloud", 423, 96],
       [585, 2204, 126, "deck", 405, 96],
-      [478, 2298, 92, "catwalk", 504, 156],
-      ramp("z", 520, 661, 497, 110, 2298, 2394),
+      [478, 2301, 92, "catwalk", 504, 156, { visualY: 2298 }],
+      ramp("z", 520, 661, 497, 110, 2301, 2394),
       [546, 2394, 197, "flag", 735, 148],
     ],
   },
@@ -89,6 +89,13 @@ const crossings = [
   "crossing", "switchback", "shelf", "rise", "traverse", "pass", "ascent",
 ];
 
+const routes = [
+  "EEEE", "ENESE", "NESEE", "EENES", "ENNESE", "NEESE", "ENEES", "EEENE",
+];
+const services = [
+  ["bridge"], ["ramp"], ["stair"], ["bridge", "ramp"], ["ramp", "bridge"], ["stair", "bridge"],
+];
+
 function route(index) {
   const stage = index - sections.length;
   const difficulty = stage / (LEVEL_COUNT - sections.length - 1);
@@ -97,50 +104,61 @@ function route(index) {
     seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
     return Math.round(min + (max - min) * (seed / 2 ** 32));
   };
-  const direction = index % 2 ? -1 : 1;
-  const mirror = (x) => (direction === 1 ? x : 1120 - x);
+  const reverse = index % 2 === 1;
+  const mirror = (x) => reverse ? 1120 - x : x;
   const theme = stage % sections.length;
   const visualBaseY = sections[theme].ledges[0][1];
   const face = theme === 0 ? 0 : (stage + Math.floor(stage / 4)) % 4;
   const orient = ([cx, y, w, kind, cz, d, terrain]) => {
     if (face === 0) return [cx, y, w, kind, cz, d, terrain];
-    if (face === 1) return [cx, y, w, kind, 1000 - cz, d, terrain];
+    if (face === 1) return [cx, y, w, kind, 1020 - cz, d, terrain];
     const slope = terrain?.slope && { ...terrain.slope, axis: "z" };
-    return [cz + (face === 2 ? 90 : -675), y, d, kind, cx, w, { ...terrain, slope }];
+    return [cz + (face === 2 ? 109 : -690), y, d, kind, cx, w, { ...terrain, slope }];
   };
-  const z = random(803, 854);
-  let x = random(186, 215);
+
+  const pattern = routes[stage % routes.length];
+  const works = services[Math.floor(stage / routes.length)];
+  let x = random(173, 190);
+  let z = random(794, 816);
   let y = visualBaseY;
-  let currentZ = z;
-  const ledges = [[mirror(x), y, 172, "floor", currentZ, 160]];
+  const ledges = [[mirror(x), y, 172, "floor", z, 144]];
   const materials = ["stone", "deck", "crate", "catwalk", "cloud"];
-  const count = 4 + Number(stage % 3 === 2);
-  for (let jump = 0; jump < count; jump += 1) {
-    x += random(108, 127) + Math.round(15 * difficulty);
-    y += random(56, 68) + Math.round(17 * difficulty);
-    currentZ = z + random(-34, 42) * (jump % 2 ? -1 : 1);
+  for (const [jump, direction] of [...pattern].entries()) {
+    if (direction === "E") x += random(105, 118) + Math.round(10 * difficulty);
+    else z += (direction === "N" ? 1 : -1) * (random(80, 91) + Math.round(8 * difficulty));
+    const rise = random(53, 66) + Math.round(18 * difficulty);
     const motion = random(0, 9);
-    const kind = jump === count - 1 ? "deck" : motion < 4 * difficulty ? "moving"
+    const kind = jump === pattern.length - 1 ? "deck" : motion < 4 * difficulty ? "moving"
       : motion < 1 + 4 * difficulty ? "wobble" : materials[random(0, materials.length - 1)];
-    const width = random(113, 130) - Math.round(40 * difficulty);
-    const depth = random(103, 122) - Math.round(31 * difficulty);
-    ledges.push([mirror(x), y, width, kind, currentZ, depth]);
+    const wobbleClearance = 8 * (Number(kind === "wobble") + Number(ledges.at(-1)[3] === "wobble"));
+    // Leave the full 43-unit climber plus a margin between overlapping jump slabs.
+    y += Math.max(rise, thickness[kind] + wobbleClearance + 44);
+    const width = random(115, 129) - Math.round(35 * difficulty);
+    const depth = random(105, 123) - Math.round(30 * difficulty);
+    ledges.push([mirror(x), y, width, kind, z, depth]);
   }
-  // The final crossing meets the deck edge so it can be run without another jump.
-  const last = ledges.at(-1);
-  const from = x + last[2] / 2 - 14;
-  const to = Math.min(from + random(85, 117), 992);
-  const width = Math.round(90 - difficulty * 36);
-  const crossing = stage % 3;
-  const finishHeight = y + (crossing === 2 ? 0 : random(25, 47) + Math.round(16 * difficulty));
-  if (crossing === 0) {
-    ledges.push(ramp("x", mirror(from), mirror(to), currentZ, width, y, finishHeight));
-  } else if (crossing === 1) {
-    ledges.push(...stairs("x", mirror(from), mirror(to), currentZ, width, y, finishHeight));
-  } else {
-    ledges.push([mirror((from + to) / 2), y, to - from, "bridge", currentZ, width]);
+
+  let edge = x + ledges.at(-1)[2] / 2 - 14;
+  const width = Math.round(89 - difficulty * 33);
+  for (const kind of works) {
+    const end = edge + (works.length === 1 ? random(77, 91) : random(50, 59));
+    const rise = kind === "bridge" ? 0 : random(22, 38) + Math.round(12 * difficulty);
+    if (kind === "bridge") {
+      ledges.push([mirror((edge + end) / 2), y, end - edge, kind, z, width]);
+    } else if (kind === "ramp") {
+      ledges.push(ramp("x", mirror(edge), mirror(end), z, width, y, y + rise));
+    } else {
+      ledges.push(...stairs("x", mirror(edge), mirror(end), z, width, y, y + rise));
+    }
+    edge = end;
+    y += rise;
   }
-  ledges.push([mirror(to + 47), finishHeight, 94, "flag", currentZ, 117]);
+
+  // Every exit has a higher mandatory jump than the previous level.
+  const approach = edge + 37;
+  ledges.push([mirror(approach), y, 74, "deck", z, 96]);
+  const summit = approach + Math.round(107 + 7 * difficulty);
+  ledges.push([mirror(summit), y + 98 + stage * .57, 102 - Math.round(24 * difficulty), "flag", z, 112]);
   const name = index === LEVEL_COUNT - 1 ? "The summit"
     : `${places[Math.floor(stage / crossings.length)]} ${crossings[stage % crossings.length]}`;
   return { name, ledges: ledges.map(orient) };
@@ -163,7 +181,9 @@ for (let index = 0; index < LEVEL_COUNT; index += 1) {
       y: visualY + shift,
       w, kind, z: depthCentre - d / 2, d, thickness: thickness[kind],
       zone: index % sections.length, visualY, start: order === 0,
-      ...(generated ? { designSeed: (index + 1) * 64 + order, movementRate: .93 + .23 * (index - 4) / (LEVEL_COUNT - 5) } : {}),
+      designSeed: (index + 1) * 64 + order,
+      pieceCode: `${String(index + 1).padStart(2, "0")}-${String(order + 1).padStart(2, "0")}`,
+      ...(generated ? { movementRate: .93 + .23 * (index - 4) / (LEVEL_COUNT - 5) } : {}),
       ...terrain,
     };
   });

@@ -56,6 +56,8 @@ export function createGame(levelIndex = 0) {
     time: 0,
     player: {},
     effects: Object.fromEntries(Object.keys(durations).map((key) => [key, 0])),
+    effectPower: Object.fromEntries(Object.keys(durations).map((key) => [key, 1])),
+    giftQueue: [],
     dragon: null,
     bestY: level.baseY,
     won: false,
@@ -82,7 +84,7 @@ export function advanceLevel(game) {
   return true;
 }
 
-export function trigger(game, effect) {
+export function trigger(game, effect, { power = 1, seconds, wind } = {}) {
   if (game.levelComplete) return false;
 
   if (effect === "dragon") {
@@ -98,6 +100,8 @@ export function trigger(game, effect) {
       phase: "warning",
       direction,
       elapsed: 0,
+      warning: .92 / power,
+      speed: 650 * power,
       hit: false,
     };
     return true;
@@ -105,16 +109,47 @@ export function trigger(game, effect) {
 
   if (!Object.hasOwn(durations, effect)) return false;
   if (effect === "gust") {
-    game.gustDirection = game.player.x < WIDTH / 2 ? -1 : 1;
-    game.gustDepth = game.player.z < DEPTH / 2 ? -1 : 1;
+    game.gustDirection = wind?.[0] ?? (game.player.x < WIDTH / 2 ? -1 : 1);
+    game.gustDepth = wind?.[1] ?? (game.player.z < DEPTH / 2 ? -1 : 1);
   }
   if ((effect === "float" || effect === "flip") && game.effects[effect] === 0) {
     game.player.grounded = null;
     game.player.vy = Math.max(60, game.player.vy);
     game.player.coyote = 0;
   }
-  game.effects[effect] = durations[effect];
+  game.effects[effect] = seconds ?? durations[effect];
+  game.effectPower[effect] = power;
   return true;
+}
+
+function applyGiftAction(game, action) {
+  if (action.kind === "effect") return trigger(game, action.effect, action);
+  const { player } = game;
+  if (action.kind === "brake") {
+    player.vx *= action.factor;
+    player.vz *= action.factor;
+    return true;
+  }
+  if (action.kind !== "impulse") return false;
+  player.vx = clamp(player.vx + action.x, -560, 560);
+  player.vz = clamp(player.vz + action.z, -560, 560);
+  player.vy = clamp(Math.max(0, player.vy) + action.y, 0, 830);
+  player.grounded = null;
+  player.coyote = 0;
+  return true;
+}
+
+export function triggerGiftInteraction(game, recipe) {
+  if (game.levelComplete || !recipe?.actions) return false;
+  let accepted = false;
+  for (const action of recipe.actions) {
+    if (action.delay <= 0) accepted = applyGiftAction(game, action) || accepted;
+    else if (game.giftQueue.length < 64) {
+      game.giftQueue.push({ at: game.time + action.delay, action });
+      accepted = true;
+    }
+  }
+  return accepted;
 }
 
 function updateDragon(game, dt) {
@@ -122,11 +157,11 @@ function updateDragon(game, dt) {
   if (!dragon) return;
 
   dragon.elapsed += dt;
-  if (dragon.elapsed < 0.92) return;
+  if (dragon.elapsed < dragon.warning) return;
 
   dragon.phase = "swoop";
   const oldX = dragon.x;
-  dragon.x += dragon.direction * 650 * dt;
+  dragon.x += dragon.direction * dragon.speed * dt;
   const { player } = game;
   const overlapsX = player.x >= Math.min(oldX, dragon.x) - 45 && player.x <= Math.max(oldX, dragon.x) + 45;
   const overlapsZ = Math.abs(player.z - dragon.z) < 33;
@@ -251,13 +286,20 @@ function movePlayer(player, motion, solids) {
 
 export function step(game, input, dt) {
   if (game.levelComplete || dt <= 0) return;
-  const { player, effects, level } = game;
+  const { player, effects, effectPower, level } = game;
   const { goal: flag } = level;
   const previousTime = game.time;
   game.time += dt;
   if (game.time >= game.noticeUntil) game.notice = "";
 
   for (const effect of Object.keys(effects)) effects[effect] = Math.max(0, effects[effect] - dt);
+  if (game.giftQueue.length) {
+    game.giftQueue = game.giftQueue.filter(({ at, action }) => {
+      if (at > game.time) return true;
+      applyGiftAction(game, action);
+      return false;
+    });
+  }
 
   const frameSolids = solidsForStep(level.index, previousTime, game.time);
   const carrier = player.grounded && frameSolids.find(({ platform }) => platform === player.grounded);
@@ -270,17 +312,17 @@ export function step(game, input, dt) {
   const across = Number(Boolean(input.right)) - Number(Boolean(input.left));
   const depth = Number(Boolean(input.front)) - Number(Boolean(input.back));
   const direction = effects.flip ? -1 : 1;
-  const speed = (boost ? 342 : 265) / (across && depth ? Math.SQRT2 : 1);
+  const speed = (265 + (boost ? 77 * effectPower.boost : 0)) / (across && depth ? Math.SQRT2 : 1);
   const yaw = input.yaw || 0;
   const cos = Math.cos(yaw);
   const sin = Math.sin(yaw);
   const moveX = across * cos + depth * sin;
   const moveZ = depth * cos - across * sin;
   const traction = grounded ? 3100 : 1750;
-  const tractionX = slippery ? (Math.abs(moveX) > 0.001 ? 580 : 118) : traction;
-  const tractionZ = slippery ? (Math.abs(moveZ) > 0.001 ? 580 : 118) : traction;
-  const gustX = effects.gust > 0 ? game.gustDirection * 110 : 0;
-  const gustZ = effects.gust > 0 ? game.gustDepth * 55 : 0;
+  const tractionX = slippery ? (Math.abs(moveX) > 0.001 ? 580 : 118) / effectPower.slippery : traction;
+  const tractionZ = slippery ? (Math.abs(moveZ) > 0.001 ? 580 : 118) / effectPower.slippery : traction;
+  const gustX = effects.gust > 0 ? game.gustDirection * 110 * effectPower.gust : 0;
+  const gustZ = effects.gust > 0 ? game.gustDepth * 55 * effectPower.gust : 0;
   player.vx = approach(player.vx, moveX * direction * speed + gustX, tractionX * dt);
   player.vz = approach(player.vz, moveZ * direction * speed + gustZ, tractionZ * dt);
 
@@ -288,7 +330,8 @@ export function step(game, input, dt) {
   player.jumpBuffer = input.jump && !player.jumpHeld ? 0.12 : Math.max(0, player.jumpBuffer - dt);
   player.jumpHeld = Boolean(input.jump);
   if (!floating && ((player.coyote && player.jumpBuffer) || (grounded && effects.bounce))) {
-    player.vy = boost ? 754 : 588;
+    const jumpPower = 588 + (boost ? 166 * effectPower.boost : 0);
+    player.vy = jumpPower * (effects.bounce ? Math.sqrt(effectPower.bounce) : 1);
     player.grounded = null;
     player.coyote = 0;
     player.jumpBuffer = 0;
@@ -296,7 +339,7 @@ export function step(game, input, dt) {
 
   if (!player.grounded) {
     player.vy = floating
-      ? approach(player.vy, effects.flip ? 145 : 88, 820 * dt)
+      ? approach(player.vy, effects.flip ? 145 * effectPower.flip : 88 * effectPower.float, 820 * dt)
       : Math.max(-940, player.vy - 1270 * dt);
   }
 

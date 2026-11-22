@@ -1,6 +1,6 @@
 # Skybreak
 
-Skybreak is a solo third-person 3D climb through **50 levels** above the clouds. Run up stone stairs and ramps, cross timber bridges and jump between construction obstacles. Touch each finish flag and choose **Ascend** to move higher. Later levels narrow the landings, widen the gaps and introduce more moving obstacles. Falls return you to the start of your current level without damage.
+Skybreak is a solo third-person 3D climb through **50 levels** above the clouds. Run up stone stairs and ramps, cross timber bridges and jump between construction obstacles. Touch each finish flag and choose **Ascend** to move higher. Every new level raises the hardest required jump. Later routes also mix in narrow landings, wider gaps and faster moving pieces. Falls return you to the start of your current level without damage.
 
 ## Play the game
 
@@ -8,14 +8,14 @@ Skybreak is a solo third-person 3D climb through **50 levels** above the clouds.
 
 - Move with **WASD** or the **arrow keys**, relative to the camera. Jump with **Space**. Drag on the game or use **Q / E** to orbit, and press **R** to face the route. Touch screens have on-screen movement and jump controls.
 - Aim for the mint marker on the next ledge. Ledges are solid, so jump around their edges and land on top. Use your shadow to judge how far forward or back you need to move. The game requires WebGL 2.
-- The current level is saved in this browser when you ascend. Restart takes you back to the start of that level.
-- Try the gift simulator before opening TikFinity. The gift panel shows the assignments for your current level.
+- Use **Jump to level** above the game to start any of the 50 levels. Your current level saves in this browser, and **Restart level** takes you back to its entrance.
+- Each level has ten playable gift interactions, for 500 across the climb. The gift panel describes the current interactions and lets you test any of them for free. Some effects act immediately, while others follow with a second effect after a delay.
 
 ## Connect your TikTok LIVE
 
 1. Install and open the **TikFinity Desktop App for Windows** on the PC running the game. Complete [TikFinity Setup](https://tikfinity.com/app/setup) and connect your own TikTok account there. Start your TikTok LIVE and connect TikFinity to that stream.
 2. Open Skybreak in your browser on the same computer. Use the game's TikFinity connection button. If the browser asks for local network access, allow it for the game. A connected status confirms that the game can reach the desktop app. Check separately that your LIVE is connected inside TikFinity.
-3. In the gift settings, assign the gift names available in your LIVE. The editor sets their Level 1 effects. Every level has a different set of assignments, shown in the gift panel. Names match without regard to case. Leave a slot blank to disable that gift.
+3. In the gift settings, assign the gift names available in your LIVE. The editor sets the Level 1 gift assignments. The seven original names carry over, and three optional slots start blank. The gift panel shows the active assignments and effects for your current level. Names match without regard to case.
 4. Use the in-game simulator to rehearse the effects without spending coins. Then check that a gift received on your LIVE appears in the game and triggers its mapped effect. A gift streak applies its effect when the streak ends.
 5. Capture the game browser window in OBS or TikTok LIVE Studio. Keep the game focused while you play.
 

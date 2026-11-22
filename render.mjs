@@ -1,6 +1,7 @@
 import * as THREE from './vendor/three.module.min.js';
 import { GLTFLoader } from './vendor/gltf-loader.mjs';
 import { LEVEL_COUNT, PLAYER_HEIGHT, platformTop } from './engine.mjs';
+import { platformDesign } from './platform-design.mjs';
 
 const colours = {
   iron: '#233740', rails: '#60787a', bolts: '#d5d7bf', markings: '#f1bb63',
@@ -452,14 +453,46 @@ function salvageFace(group, style, w, d, thickness, colour) {
 
 const salvageDesigns = [...salvage.values()];
 
+function constructionBraces(group, platform, design) {
+  const { w, d, x, y, z, thickness } = platform;
+  const alongX = w >= d;
+  const span = alongX ? w : d;
+  const cross = alongX ? d : w;
+  const side = design.pattern % 2 ? 1 : -1;
+  const face = side * (cross / 2 + .3);
+  const centre = (design.offset / 15 - .5) * span * .38;
+  const reach = span * (.19 + design.span / 50 * .23);
+  const count = 1 + design.pattern % 3;
+  const motif = Math.floor(design.pattern / 3);
+  const local = (along, down) => {
+    const [px, pz] = alongX ? [along, face] : [face, along];
+    const top = platformTop(platform, x + w / 2 + px, z + d / 2 + pz);
+    return [px, top - y - down, pz];
+  };
+  const bar = Math.min(2.7, span * .07);
+  const cut = thickness * design.span / 500;
+  for (let i = 0; i < count; i++) {
+    const at = centre + (i - (count - 1) / 2) * reach * .62;
+    if (motif === 0) {
+      beam(group, local(at, 2 + cut), local(at, thickness - 2 - cut), bar, design.colour);
+    } else if (motif === 1) {
+      beam(group, local(at - reach / 2, thickness * .4), local(at + reach / 2, thickness * .65), bar, design.colour);
+    } else {
+      const up = local(at, thickness * .25 - cut), down = local(at, thickness * .75 + cut);
+      beam(group, up, down, bar * 1.3, design.colour);
+      orb(group, colours.bolts, bar * .39, bar * .39, bar * .39, ...up);
+    }
+  }
+}
+
 function buildLedge(platform, textures) {
   const group = new THREE.Group();
   const { kind, w, d, start, thickness } = platform;
   const longX = w >= d;
   const piece = !['floor', 'stair', 'ramp', 'bridge', 'flag'].includes(kind);
-  const design = piece && (platform.designSeed === undefined
-    ? salvage.get(platform.visualY ?? platform.y)
-    : salvageDesigns[(platform.designSeed >>> 0) % salvageDesigns.length]);
+  const art = platformDesign(platform.designSeed);
+  const design = piece && (salvage.get(platform.visualY) ??
+    salvageDesigns[(platform.designSeed >>> 0) % salvageDesigns.length]);
   const surface = design?.[0] ?? (kind === 'bridge' ? 'wood' : kind === 'stair' || kind === 'ramp' ? 'stone' : 'iron');
   const [finish, trim] = design ? [design[1], design[2]] : [null, null];
   const girder = kind === 'wire';
@@ -472,10 +505,7 @@ function buildLedge(platform, textures) {
     color: colour, map, bumpMap: map, bumpScale: metal ? .17 : .7,
     metalness: metal ? .5 : 0, roughness: metal ? .61 : .94,
   });
-  if (platform.designSeed !== undefined) {
-    const hue = random(platform.designSeed)() - .5;
-    topMaterial.color.offsetHSL(hue * .17, 0, hue * .1);
-  }
+  topMaterial.color.lerp(new THREE.Color(art.colour), piece ? .28 : .13);
   const lowerMaterial = topMaterial.clone();
   lowerMaterial.color.multiplyScalar(.74);
   const tile = surface === 'brick' ? 142 : surface === 'stone' ? 123 : surface === 'wood' ? 90 : 91;
@@ -492,6 +522,7 @@ function buildLedge(platform, textures) {
   }
   if (kind === 'bridge') bridgeDetails(group, w, d, thickness);
   if (trim) salvageFace(group, trim, w, d, thickness, colour);
+  constructionBraces(group, platform, art);
   if (surface === 'iron') {
     for (const x of [-w / 2 + 5, w / 2 - 5]) {
       box(group, narrow ? colours.markings : colours.rails, 3, .8, d - 10, x, .12);
@@ -771,6 +802,7 @@ export function createRenderer(canvas, world, follow) {
     if (level === next) return;
     if (terrain) disposeStage(terrain);
     level = next;
+    player.body.rotation.y = follow.yaw + Math.PI;
     terrain = new THREE.Group();
     const offsetY = level.baseY - level.visualBaseY;
     scenery.position.y = offsetY;
@@ -812,7 +844,7 @@ export function createRenderer(canvas, world, follow) {
       renderer.setSize(clientWidth, clientHeight, false);
     },
     reset() {
-      player.body.rotation.y = Math.PI;
+      player.body.rotation.y = follow.yaw + Math.PI;
     },
     draw(game, dt, reducedMotion) {
       setLevel(game.level);

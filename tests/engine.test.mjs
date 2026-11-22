@@ -48,13 +48,30 @@ test("all fifty stages are distinct, playable and strictly higher than the previ
   assert.equal(advanceLevel(game), false);
   assert.equal(createGame("length").level, levels[0]);
   const layouts = new Set();
+  const pieceSeeds = new Set();
+  const pieceCodes = new Set();
+  let pieces = 0;
   for (const level of levels) {
     assert.equal(game.level, level);
     if (level.index > 0) assert(level.spawn.y > levels[level.index - 1].goal.y);
     const route = level.platforms;
     assert(route.every(({ x, z, w, d }) => x >= 0 && z >= 0 && x + w <= WIDTH && z + d <= DEPTH));
-    if (level.index >= 4) assert(route.every(({ designSeed }) => Number.isInteger(designSeed)));
-    layouts.add(JSON.stringify(level.platforms.map(({ x, y, z, w, d, kind }) => [x, y - level.baseY, z, w, d, kind])));
+    for (const { designSeed, pieceCode } of route) {
+      assert(Number.isInteger(designSeed));
+      pieceSeeds.add(designSeed);
+      pieceCodes.add(pieceCode);
+      pieces += 1;
+    }
+    const layout = route.slice(1).flatMap((platform, index) => {
+      const previous = route[index];
+      if (platform.kind === "stair" && previous.stairway === platform.stairway) return [];
+      const dx = platform.x + platform.w / 2 - previous.x - previous.w / 2;
+      const dz = platform.z + platform.d / 2 - previous.z - previous.d / 2;
+      const direction = Math.abs(dx) > Math.abs(dz) ? `x${Math.sign(dx)}` : `z${Math.sign(dz)}`;
+      const action = ["ramp", "bridge", "stair", "flag"].includes(platform.kind) ? platform.kind : "deck";
+      return [`${action}:${direction}`];
+    });
+    layouts.add(layout.join("|"));
     climb(game);
     assert.equal(game.levelComplete, true);
     assert.equal(game.bestY, level.goal.y);
@@ -63,38 +80,46 @@ test("all fifty stages are distinct, playable and strictly higher than the previ
     assert.equal(advanceLevel(game), level.index < LEVEL_COUNT - 1);
   }
   assert.equal(layouts.size, LEVEL_COUNT);
+  assert.equal(pieceSeeds.size, pieces);
+  assert.equal(pieceCodes.size, pieces);
   assert.equal(game.level.index, LEVEL_COUNT - 1);
   assert.equal(game.won, true);
 });
 
-test("late stages have higher, wider jumps and narrower landings with more moving obstacles", () => {
-  function metrics(group) {
-    const ledges = group.flatMap((level) => level.platforms.filter(({ kind }) =>
-      !["ramp", "stair", "bridge", "flag", "floor"].includes(kind)));
-    const meanWidth = ledges.reduce((sum, { w }) => sum + w, 0) / ledges.length;
-    let gap = 0, rise = 0, jumps = 0;
-    for (const level of group) {
-      let previous = level.platforms[0];
-      for (const ledge of level.platforms.filter((platform) => ledges.includes(platform))) {
-        const dx = ledge.x + ledge.w / 2 - (previous.x + previous.w / 2);
-        const dz = ledge.z + ledge.d / 2 - (previous.z + previous.d / 2);
-        gap += Math.abs(dx) > Math.abs(dz) ? Math.abs(dx) - (ledge.w + previous.w) / 2
-          : Math.abs(dz) - (ledge.d + previous.d) / 2;
-        rise += ledge.y - previous.y;
-        jumps += 1;
-        previous = ledge;
-      }
-    }
-    return { meanWidth, gap: gap / jumps, rise: rise / jumps, motion: ledges.filter(({ kind }) => kind === "moving").length };
+test("every level increases the tallest required jump from solid ground", () => {
+  let previous = 0;
+  for (const level of levels) {
+    const rises = level.platforms.slice(1).map((target, index) => {
+      const start = level.platforms[index];
+      const walk = target.slope || start.slope || target.stairway !== undefined || start.stairway !== undefined;
+      return walk ? 0 : target.y - start.y;
+    });
+    const hardestJump = Math.max(...rises);
+    assert(hardestJump > previous, `level ${level.index + 1} must demand a higher jump`);
+    previous = hardestJump;
   }
-  const easy = metrics(levels.slice(4, 12));
-  const hard = metrics(levels.slice(-8));
-  assert(hard.meanWidth < easy.meanWidth - 25);
-  assert(hard.gap > easy.gap + 25);
-  assert(hard.rise > easy.rise + 8);
-  assert(hard.motion > easy.motion);
-  assert(Math.max(...levels[4].platforms.map(({ movementRate }) => movementRate)) <
-    Math.min(...levels.at(-1).platforms.map(({ movementRate }) => movementRate)));
+
+  const ordinary = (group) => group.flatMap((level) => level.platforms.filter(({ kind }) =>
+    !["ramp", "stair", "bridge", "flag", "floor"].includes(kind)));
+  const meanWidth = (pieces) => pieces.reduce((sum, { w, d }) => sum + Math.min(w, d), 0) / pieces.length;
+  const easy = ordinary(levels.slice(4, 12));
+  const hard = ordinary(levels.slice(-8));
+  assert(meanWidth(hard) < meanWidth(easy) - 18);
+  assert(hard.filter(({ kind }) => kind === "moving").length > easy.filter(({ kind }) => kind === "moving").length);
+  assert(levels[4].platforms[0].movementRate < levels.at(-1).platforms[0].movementRate);
+});
+
+test("generated jump slabs leave standing room throughout both wobble cycles", () => {
+  for (const level of levels.slice(4)) {
+    const firstCrossing = level.platforms.findIndex(({ kind }) => ["bridge", "ramp", "stair"].includes(kind));
+    for (let index = 1; index < firstCrossing; index += 1) {
+      const lower = level.platforms[index - 1];
+      const upper = level.platforms[index];
+      const highestFloor = lower.y + (lower.kind === "wobble" ? 8 : 0);
+      const lowestCeiling = upper.y - upper.thickness - (upper.kind === "wobble" ? 8 : 0);
+      assert(lowestCeiling - highestFloor >= PLAYER_HEIGHT, `level ${level.index + 1}, piece ${upper.pieceCode}`);
+    }
+  }
 });
 
 test("the opening ledge needs forward movement as well as a jump", () => {

@@ -1,21 +1,28 @@
-import { WIDTH, DEPTH, LEVEL_COUNT, advanceLevel, createGame, step, trigger, platformPosition, targetPlatform } from './engine.mjs';
+import { WIDTH, DEPTH, LEVEL_COUNT, levels, advanceLevel, createGame, step, triggerGiftInteraction, platformPosition, targetPlatform } from './engine.mjs';
 import { DEFAULT_GIFTS, createTikFinity } from './tikfinity.mjs';
-import { giftMappingsForLevel } from './level-gifts.mjs';
+import { GIFT_SLOTS, giftInteractionsForLevel, giftMappingsForLevel } from './level-gifts.mjs';
 import { createRenderer } from './render.mjs';
 import { createFollowCamera } from './camera.mjs';
 
 const effects = {
-  dragon: { name: 'Dragon swoop', icon: '◈', colour: '#fea78a', text: 'Jump or dodge the swoop' },
-  slippery: { name: 'Flash freeze', icon: '✳', colour: '#92e3fa', text: 'Lose your grip' },
-  boost: { name: 'Power jump', icon: 'ϟ', colour: '#fce492', text: 'Jump higher and further' },
-  float: { name: 'Levitation', icon: '◌', colour: '#c6b5ff', text: 'Float for 10 seconds' },
-  flip: { name: 'Gravity flip', icon: '↻', colour: '#faaccc', text: 'Turn the world upside down' },
-  gust: { name: 'Crosswind', icon: '≋', colour: '#b3efd6', text: 'Get pushed by a gust' },
-  bounce: { name: 'Rebound', icon: '↟', colour: '#ffc88a', text: 'Bounce off platforms' },
+  dragon: { name: 'Dragon swoop', icon: '◈', colour: '#fea78a' },
+  slippery: { name: 'Flash freeze', icon: '✳', colour: '#92e3fa' },
+  boost: { name: 'Power jump', icon: 'ϟ', colour: '#fce492' },
+  float: { name: 'Levitation', icon: '◌', colour: '#c6b5ff' },
+  flip: { name: 'Gravity flip', icon: '↻', colour: '#faaccc' },
+  gust: { name: 'Crosswind', icon: '≋', colour: '#b3efd6' },
+  bounce: { name: 'Rebound', icon: '↟', colour: '#ffc88a' },
+  drift: { name: 'Optional gift 1', icon: '∿', colour: '#b9cdf6' },
+  surge: { name: 'Optional gift 2', icon: '▲', colour: '#c3ebaa' },
+  echo: { name: 'Optional gift 3', icon: '⊕', colour: '#f1c2b2' },
 };
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game');
+const levelSelect = $('level-select');
+for (const level of levels) {
+  levelSelect.add(new Option(`${level.index + 1}. ${level.name}`, String(level.index)));
+}
 const follow = createFollowCamera();
 const progressKey = 'skybreak-level';
 let savedLevel = 0;
@@ -50,12 +57,13 @@ const held = new Set();
 let jumpQueued = false;
 const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
 let status = 'offline';
-let mappings = { ...DEFAULT_GIFTS };
-const giftLabels = {};
+let mappings = Object.fromEntries(GIFT_SLOTS.map((id) => [id, DEFAULT_GIFTS[id] ?? '']));
+const giftCards = {};
+let interactions = {};
 
 try {
   const saved = JSON.parse(localStorage.getItem('biscuit-rising-gifts'));
-  for (const id of Object.keys(effects)) {
+  for (const id of GIFT_SLOTS) {
     if (typeof saved?.[id] === 'string') mappings[id] = saved[id];
   }
 } catch {
@@ -63,6 +71,7 @@ try {
 }
 
 const connection = createTikFinity({
+  effectIds: GIFT_SLOTS,
   onStatus(next) {
     status = next;
     $('connection').dataset.state = next;
@@ -80,35 +89,46 @@ const connection = createTikFinity({
       ? `Test gift: ${giftName}`
       : `Last gift: ${giftName} ×${count} from ${sender}`;
   },
-  onGift({ effect, giftName, count, simulated }) {
-    const applied = !game.levelComplete && trigger(game, effect);
-    $('last-gift').textContent = applied
-      ? `${simulated ? 'Test' : count > 1 ? `${giftName} ×${count}` : giftName} triggered ${effects[effect].name}.`
-      : `${effects[effect].name} is unavailable right now.`;
-  },
+  onGift: applyInteraction,
 });
+
+function applyInteraction({ effect, giftName, count = 1, simulated }) {
+  const interaction = interactions[effect];
+  if (!interaction) return;
+  const applied = !game.levelComplete && triggerGiftInteraction(game, interaction.recipe);
+  const source = simulated ? 'Test' : count > 1 ? `${giftName} ×${count}` : giftName;
+  $('last-gift').textContent = applied
+    ? `${source} triggered ${interaction.name}.`
+    : `${interaction.name} is unavailable right now.`;
+}
 
 function applyGiftMappings() {
   const active = giftMappingsForLevel(mappings, game.level.index);
   connection.setMappings(active);
-  for (const id of Object.keys(effects)) setText(giftLabels[id], active[id] || 'No live gift assigned');
+  interactions = Object.fromEntries(giftInteractionsForLevel(game.level.index).map((interaction) => [interaction.id, interaction]));
+  for (const id of GIFT_SLOTS) {
+    const { title, detail, gift, button } = giftCards[id];
+    setText(title, interactions[id].name);
+    setText(detail, interactions[id].description);
+    setText(gift, active[id] || 'No live gift assigned');
+    button.setAttribute('aria-label', `Test ${interactions[id].name}`);
+  }
 }
 
-for (const [id, effect] of Object.entries(effects)) {
+for (const id of GIFT_SLOTS) {
+  const effect = effects[id];
   const row = document.createElement('div');
   row.className = 'effect';
   row.innerHTML = `<span class="icon" aria-hidden="true">${effect.icon}</span>
-    <div><strong>${effect.name}</strong><small>${effect.text}</small><small class="gift-name"></small></div>
-    <button type="button" class="test" aria-label="Test ${effect.name}">Test</button>`;
+    <div><strong></strong><small class="effect-detail"></small><small class="gift-name"></small></div>
+    <button type="button" class="test">Test</button>`;
   row.style.setProperty('--tint', effect.colour);
-  giftLabels[id] = row.querySelector('.gift-name');
-  row.querySelector('button').addEventListener('click', () => {
-    if (!connection.simulate(id)) {
-      const applied = !game.levelComplete && trigger(game, id);
-      $('last-gift').textContent = applied
-        ? `Tested ${effect.name}. No live gift assigned.`
-        : `${effect.name} is unavailable right now.`;
-    }
+  const button = row.querySelector('button');
+  giftCards[id] = {
+    title: row.querySelector('strong'), detail: row.querySelector('.effect-detail'), gift: row.querySelector('.gift-name'), button,
+  };
+  button.addEventListener('click', () => {
+    if (!connection.simulate(id)) applyInteraction({ effect: id, simulated: true });
     if (renderer) {
       gameShell.scrollIntoView({ block: 'start' });
       canvas.focus({ preventScroll: true });
@@ -168,6 +188,7 @@ if (document.fullscreenEnabled) {
 
 function updateLevelView() {
   const number = game.level.index + 1;
+  levelSelect.value = String(game.level.index);
   setText($('level-count'), `Level ${number} of ${LEVEL_COUNT}`);
   setText($('zone'), game.level.name);
   setText($('altitude'), `${Math.floor(game.bestY / 10)} m`);
@@ -175,7 +196,12 @@ function updateLevelView() {
   applyGiftMappings();
 }
 
-function enterLevel() {
+function enterLevel(focusGame = true) {
+  try {
+    localStorage.setItem(progressKey, String(game.level.index));
+  } catch {
+    // The current level still changes when storage is blocked.
+  }
   if (game.level.index === 0) follow.reset(game);
   else alignRoute();
   renderer?.setLevel?.(game.level);
@@ -184,8 +210,14 @@ function enterLevel() {
   $('finish').hidden = true;
   setText($('last-gift'), 'Waiting for a gift or test.');
   updateLevelView();
-  canvas.focus({ preventScroll: true });
+  if (focusGame) canvas.focus({ preventScroll: true });
 }
+levelSelect.addEventListener('change', () => {
+  const level = levels[Number(levelSelect.value)];
+  if (!level || level.index === game.level.index) return;
+  game = createGame(level.index);
+  enterLevel(false);
+});
 $('restart').addEventListener('click', () => {
   const bestY = game.bestY;
   game = createGame(game.level.index);
@@ -195,11 +227,6 @@ $('restart').addEventListener('click', () => {
 $('again').addEventListener('click', () => {
   if (game.won) game = createGame();
   else if (!advanceLevel(game)) return;
-  try {
-    localStorage.setItem(progressKey, String(game.level.index));
-  } catch {
-    // The current run still advances when storage is blocked.
-  }
   enterLevel();
 });
 
@@ -241,7 +268,7 @@ for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
 }
 
 window.addEventListener('keydown', (event) => {
-  if (game.levelComplete || game.won || event.ctrlKey || event.metaKey || event.altKey || event.target.closest?.('button, input, a, summary')) return;
+  if (game.levelComplete || game.won || event.ctrlKey || event.metaKey || event.altKey || event.target.closest?.('button, input, select, a, summary')) return;
   const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
   if (key === 'r') {
     event.preventDefault();
