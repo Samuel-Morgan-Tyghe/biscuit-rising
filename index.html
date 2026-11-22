@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="A solo third-person climb through 50 levels of abandoned skyworks, with optional TikFinity gift effects.">
+  <meta name="description" content="A solo climb through 50 levels of abandoned skyworks, with first-person and third-person views and TikFinity gift effects.">
   <meta name="theme-color" content="#0d141e">
   <title>Skybreak</title>
   <link rel="stylesheet" href="./style.css">
@@ -14,6 +14,7 @@
     <h1><a class="wordmark" href="./"><span class="stamp" aria-hidden="true">◈</span> Skybreak</a></h1>
     <nav aria-label="Game">
       <a href="#gift-controls">Gift controls</a>
+      <a href="#gift-catalogue">Gift catalogue</a>
       <a href="#setup">TikFinity setup <span aria-hidden="true">↗</span></a>
     </nav>
   </header>
@@ -29,6 +30,8 @@
           <select id="level-select"></select>
         </label>
         <div class="game-actions">
+          <button class="quiet" id="view-toggle" type="button" aria-pressed="false" aria-label="First person" aria-describedby="view-lock">First person <span id="view-lock" hidden></span></button>
+          <button class="quiet" id="sound-toggle" type="button" aria-pressed="true">Sound</button>
           <button class="quiet" id="align-camera" type="button" title="Face next ledge (R)">Face route</button>
           <button class="quiet" id="restart" type="button">Restart level</button>
           <button class="quiet" id="fullscreen" type="button" hidden>Full screen</button>
@@ -81,6 +84,23 @@
         </form>
       </details>
     </aside>
+    <section class="catalogue panel" id="gift-catalogue" aria-labelledby="catalogue-title" tabindex="-1">
+      <h2 id="catalogue-title">Gift catalogue</h2>
+      <p>Browse interactions across all 50 levels. Jump to a level to try the effect for free.</p>
+      <div class="catalogue-search">
+        <label for="catalogue-search">Search interactions</label>
+        <input id="catalogue-search" type="search" placeholder="Dragon, Rose or level 50">
+        <button class="quiet" id="catalogue-clear" type="button">Clear search</button>
+      </div>
+      <p id="catalogue-count" role="status"></p>
+      <nav class="catalogue-pages" id="catalogue-pages" aria-label="Catalogue pages">
+        <button class="quiet" id="catalogue-prev" type="button">Previous</button>
+        <span id="catalogue-page" aria-live="polite"></span>
+        <button class="quiet" id="catalogue-next" type="button">Next</button>
+      </nav>
+      <p id="catalogue-empty" hidden>No interactions match your search.</p>
+      <ul id="catalogue-results" aria-label="Gift interactions"></ul>
+    </section>
     <section class="setup panel" id="setup">
       <h2>Play with your TikTok LIVE</h2>
       <ol>

@@ -852,12 +852,16 @@ export function createRenderer(canvas, world, follow) {
       const { player: state, effects, time } = game;
       follow.update(game, dt, reducedMotion);
       const camera = follow.camera;
-      eye.set(state.x, state.y + 29, state.z);
-      chase.subVectors(camera.position, eye);
-      sight.far = chase.length();
-      sight.set(eye, chase.normalize());
-      const cliffHit = sight.intersectObject(cliff, false)[0];
-      if (cliffHit) camera.position.copy(eye).addScaledVector(chase, Math.max(30, cliffHit.distance - 10));
+      const firstPerson = follow.view === 'first';
+      player.body.visible = !firstPerson;
+      if (!firstPerson) {
+        eye.set(state.x, state.y + 29, state.z);
+        chase.subVectors(camera.position, eye);
+        sight.far = chase.length();
+        sight.set(eye, chase.normalize());
+        const cliffHit = sight.intersectObject(cliff, false)[0];
+        if (cliffHit) camera.position.copy(eye).addScaledVector(chase, Math.max(30, cliffHit.distance - 10));
+      }
       key.target.position.set(state.x, state.y + 13, state.z);
       key.position.copy(key.target.position).add(lightingOffset);
       let support;

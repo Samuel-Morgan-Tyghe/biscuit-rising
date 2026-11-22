@@ -9,7 +9,11 @@ Skybreak is a solo third-person 3D climb through **50 levels** above the clouds.
 - Move with **WASD** or the **arrow keys**, relative to the camera. Jump with **Space**. Drag on the game or use **Q / E** to orbit, and press **R** to face the route. Touch screens have on-screen movement and jump controls.
 - Aim for the mint marker on the next ledge. Ledges are solid, so jump around their edges and land on top. Use your shadow to judge how far forward or back you need to move. The game requires WebGL 2.
 - Use **Jump to level** above the game to start any of the 50 levels. Your current level saves in this browser, and **Restart level** takes you back to its entrance.
-- Each level has ten playable gift interactions, for 500 across the climb. The gift panel describes the current interactions and lets you test any of them for free. Some effects act immediately, while others follow with a second effect after a delay.
+- Choose **First person** above the game to switch to the climber’s view. Skybreak remembers your choice in this browser.
+- Open the **Gift catalogue** and search by name, mechanic or level. Choose **Jump and test** to load that level and try the interaction for free. There are 500 standalone interactions across the climb, with ten per level.
+- A **Perspective lock** gift switches your view and temporarily locks the camera toggle. When it expires, the game restores your chosen view.
+- A **Control lock** temporarily disables one movement direction. You can still turn the camera and move using the other controls.
+- **Phantom dragon** plays a creature warning, and **Mute game** temporarily silences game audio. Use **Sound** in the game toolbar for your own audio preference. These controls affect Skybreak’s audio.
 
 ## Connect your TikTok LIVE
 

@@ -9,7 +9,11 @@ export const PLAYER_HEIGHT = 43;
 export const PLAYER_DEPTH = 26;
 
 
-const durations = { slippery: 9, boost: 9, float: 10, flip: 1.65, gust: 4.5, bounce: 8 };
+const durations = {
+  slippery: 9, boost: 9, float: 10, flip: 1.65, gust: 4.5, bounce: 8, perspective: 2, sound: 1.2, mute: 2.4,
+  sprint: 3, heavy: 3, feather: 3, glide: 3, cyclone: 3, airControl: 3, grip: 3,
+  directionLock: 2.1, stutter: 3, quiet: 3, brake: 3, dive: 3, lateJump: 3,
+};
 const clamp = (value, low, high) => Math.max(low, Math.min(value, high));
 const approach = (value, target, amount) => value + clamp(target - value, -amount, amount);
 const halfWidth = PLAYER_WIDTH / 2;
@@ -57,8 +61,10 @@ export function createGame(levelIndex = 0) {
     player: {},
     effects: Object.fromEntries(Object.keys(durations).map((key) => [key, 0])),
     effectPower: Object.fromEntries(Object.keys(durations).map((key) => [key, 1])),
-    giftQueue: [],
+    jumpOnlyBoost: false,
     dragon: null,
+    soundCue: null,
+    lockedDirection: null,
     bestY: level.baseY,
     won: false,
     notice: "",
@@ -84,7 +90,7 @@ export function advanceLevel(game) {
   return true;
 }
 
-export function trigger(game, effect, { power = 1, seconds, wind } = {}) {
+export function trigger(game, effect, { power = 1, seconds, wind, jumpOnly = false, pan = 0, direction: lockedDirection = "left" } = {}) {
   if (game.levelComplete) return false;
 
   if (effect === "dragon") {
@@ -117,39 +123,27 @@ export function trigger(game, effect, { power = 1, seconds, wind } = {}) {
     game.player.vy = Math.max(60, game.player.vy);
     game.player.coyote = 0;
   }
+  if (effect === "boost") game.jumpOnlyBoost = jumpOnly;
   game.effects[effect] = seconds ?? durations[effect];
+  if (effect === "sound") game.soundCue = { kind: "dragon", seconds: game.effects.sound, power, pan };
+  if (effect === "directionLock") game.lockedDirection = lockedDirection;
   game.effectPower[effect] = power;
   return true;
 }
 
-function applyGiftAction(game, action) {
-  if (action.kind === "effect") return trigger(game, action.effect, action);
-  const { player } = game;
-  if (action.kind === "brake") {
-    player.vx *= action.factor;
-    player.vz *= action.factor;
-    return true;
-  }
-  if (action.kind !== "impulse") return false;
-  player.vx = clamp(player.vx + action.x, -560, 560);
-  player.vz = clamp(player.vz + action.z, -560, 560);
-  player.vy = clamp(Math.max(0, player.vy) + action.y, 0, 830);
-  player.grounded = null;
-  player.coyote = 0;
-  return true;
-}
-
 export function triggerGiftInteraction(game, recipe) {
-  if (game.levelComplete || !recipe?.actions) return false;
-  let accepted = false;
-  for (const action of recipe.actions) {
-    if (action.delay <= 0) accepted = applyGiftAction(game, action) || accepted;
-    else if (game.giftQueue.length < 64) {
-      game.giftQueue.push({ at: game.time + action.delay, action });
-      accepted = true;
-    }
+  if (game.levelComplete) return false;
+  if (recipe?.kind === "effect") return trigger(game, recipe.effect, recipe);
+  if (recipe?.kind !== "impulse") return false;
+  const { player } = game;
+  player.vx = clamp(player.vx + recipe.x, -560, 560);
+  player.vz = clamp(player.vz + recipe.z, -560, 560);
+  if (recipe.y > 0) {
+    player.vy = clamp(Math.max(0, player.vy) + recipe.y, 0, 830);
+    player.grounded = null;
+    player.coyote = 0;
   }
-  return accepted;
+  return true;
 }
 
 function updateDragon(game, dt) {
@@ -293,14 +287,6 @@ export function step(game, input, dt) {
   if (game.time >= game.noticeUntil) game.notice = "";
 
   for (const effect of Object.keys(effects)) effects[effect] = Math.max(0, effects[effect] - dt);
-  if (game.giftQueue.length) {
-    game.giftQueue = game.giftQueue.filter(({ at, action }) => {
-      if (at > game.time) return true;
-      applyGiftAction(game, action);
-      return false;
-    });
-  }
-
   const frameSolids = solidsForStep(level.index, previousTime, game.time);
   const carrier = player.grounded && frameSolids.find(({ platform }) => platform === player.grounded);
   const carry = carrier?.delta ?? noMovement;
@@ -309,25 +295,35 @@ export function step(game, input, dt) {
   const grounded = Boolean(player.grounded);
   const slippery = effects.slippery > 0;
   const boost = effects.boost > 0;
-  const across = Number(Boolean(input.right)) - Number(Boolean(input.left));
-  const depth = Number(Boolean(input.front)) - Number(Boolean(input.back));
+  if (!effects.directionLock) game.lockedDirection = null;
+  const locked = game.lockedDirection;
+  const across = Number(Boolean(input.right) && locked !== "right") - Number(Boolean(input.left) && locked !== "left");
+  const depth = Number(Boolean(input.front) && locked !== "front") - Number(Boolean(input.back) && locked !== "back");
   const direction = effects.flip ? -1 : 1;
-  const speed = (265 + (boost ? 77 * effectPower.boost : 0)) / (across && depth ? Math.SQRT2 : 1);
+  const sprint = effects.sprint ? effectPower.sprint : 1;
+  const rhythm = effects.stutter ? .62 + .36 * Math.sin(game.time * (6 + effectPower.stutter * 5)) : 1;
+  const speed = (265 + (boost && !game.jumpOnlyBoost ? 77 * effectPower.boost : 0))
+    * sprint * rhythm / (across && depth ? Math.SQRT2 : 1);
   const yaw = input.yaw || 0;
   const cos = Math.cos(yaw);
   const sin = Math.sin(yaw);
   const moveX = across * cos + depth * sin;
   const moveZ = depth * cos - across * sin;
-  const traction = grounded ? 3100 : 1750;
+  const traction = grounded ? 3100 * (effects.grip ? effectPower.grip : 1)
+    : 1750 * (effects.airControl ? effectPower.airControl : 1);
   const tractionX = slippery ? (Math.abs(moveX) > 0.001 ? 580 : 118) / effectPower.slippery : traction;
   const tractionZ = slippery ? (Math.abs(moveZ) > 0.001 ? 580 : 118) / effectPower.slippery : traction;
-  const gustX = effects.gust > 0 ? game.gustDirection * 110 * effectPower.gust : 0;
-  const gustZ = effects.gust > 0 ? game.gustDepth * 55 * effectPower.gust : 0;
-  player.vx = approach(player.vx, moveX * direction * speed + gustX, tractionX * dt);
-  player.vz = approach(player.vz, moveZ * direction * speed + gustZ, tractionZ * dt);
+  const cyclone = effects.cyclone ? 115 * effectPower.cyclone : 0;
+  const turn = game.time * 3.7;
+  const gustX = (effects.gust ? game.gustDirection * 110 * effectPower.gust : 0) + cyclone * Math.cos(turn);
+  const gustZ = (effects.gust ? game.gustDepth * 55 * effectPower.gust : 0) + cyclone * Math.sin(turn);
+  const drag = effects.brake ? Math.exp(-effectPower.brake * dt) : 1;
+  player.vx = approach(player.vx * drag, moveX * direction * speed + gustX, tractionX * dt);
+  player.vz = approach(player.vz * drag, moveZ * direction * speed + gustZ, tractionZ * dt);
 
-  player.coyote = grounded ? 0.095 : Math.max(0, player.coyote - dt);
-  player.jumpBuffer = input.jump && !player.jumpHeld ? 0.12 : Math.max(0, player.jumpBuffer - dt);
+  const grace = effects.lateJump ? effectPower.lateJump : .095;
+  player.coyote = grounded ? grace : Math.max(0, Math.min(grace, player.coyote - dt));
+  player.jumpBuffer = effects.quiet ? 0 : input.jump && !player.jumpHeld ? .12 : Math.max(0, player.jumpBuffer - dt);
   player.jumpHeld = Boolean(input.jump);
   if (!floating && ((player.coyote && player.jumpBuffer) || (grounded && effects.bounce))) {
     const jumpPower = 588 + (boost ? 166 * effectPower.boost : 0);
@@ -340,7 +336,10 @@ export function step(game, input, dt) {
   if (!player.grounded) {
     player.vy = floating
       ? approach(player.vy, effects.flip ? 145 * effectPower.flip : 88 * effectPower.float, 820 * dt)
-      : Math.max(-940, player.vy - 1270 * dt);
+      : Math.max(-940, player.vy - 1270 * dt * (effects.heavy ? effectPower.heavy : 1)
+        * (player.vy < 0 && effects.feather ? effectPower.feather : 1));
+    if (!floating && effects.dive && player.vy < 0) player.vy = Math.min(player.vy, -effectPower.dive);
+    if (!floating && effects.glide) player.vy = Math.max(player.vy, -effectPower.glide);
   }
 
   const motion = { x: player.vx * dt + carry.x, y: player.vy * dt + carry.y, z: player.vz * dt + carry.z };

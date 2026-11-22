@@ -1,8 +1,9 @@
 import { WIDTH, DEPTH, LEVEL_COUNT, levels, advanceLevel, createGame, step, triggerGiftInteraction, platformPosition, targetPlatform } from './engine.mjs';
 import { DEFAULT_GIFTS, createTikFinity } from './tikfinity.mjs';
-import { GIFT_SLOTS, giftInteractionsForLevel, giftMappingsForLevel } from './level-gifts.mjs';
+import { GIFT_EFFECT_NAMES, GIFT_SLOTS, giftInteractionsForLevel, giftMappingsForLevel } from './level-gifts.mjs';
 import { createRenderer } from './render.mjs';
 import { createFollowCamera } from './camera.mjs';
+import { createGiftAudio } from './audio.mjs';
 
 const effects = {
   dragon: { name: 'Dragon swoop', icon: '◈', colour: '#fea78a' },
@@ -16,6 +17,7 @@ const effects = {
   surge: { name: 'Optional gift 2', icon: '▲', colour: '#c3ebaa' },
   echo: { name: 'Optional gift 3', icon: '⊕', colour: '#f1c2b2' },
 };
+const directionNames = { left: 'Left', right: 'Right', back: 'Forward', front: 'Backward' };
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game');
@@ -24,15 +26,24 @@ for (const level of levels) {
   levelSelect.add(new Option(`${level.index + 1}. ${level.name}`, String(level.index)));
 }
 const follow = createFollowCamera();
+const audio = createGiftAudio();
 const progressKey = 'skybreak-level';
+const viewKey = 'skybreak-view';
+const muteKey = 'skybreak-muted';
+const viewToggle = $('view-toggle');
+const soundToggle = $('sound-toggle');
 let savedLevel = 0;
+let viewPreference = 'third';
 try {
   const index = Number(localStorage.getItem(progressKey));
   if (Number.isInteger(index) && index >= 0 && index < LEVEL_COUNT) savedLevel = index;
+  if (localStorage.getItem(viewKey) === 'first') viewPreference = 'first';
+  audio.setMuted(localStorage.getItem(muteKey) === 'true');
 } catch {
   // Play remains available when browser storage is blocked.
 }
 let game = createGame(savedLevel);
+syncView();
 if (game.level.index === 0) follow.reset(game);
 else alignRoute();
 let renderer;
@@ -48,6 +59,32 @@ try {
 canvas.addEventListener('webglcontextlost', () => { $('graphics-error').hidden = false; });
 canvas.addEventListener('webglcontextrestored', () => { $('graphics-error').hidden = true; });
 const gameShell = canvas.closest('.game-shell');
+const unlockAudio = () => audio.unlock();
+window.addEventListener('pointerdown', unlockAudio);
+window.addEventListener('keydown', unlockAudio);
+soundToggle.setAttribute('aria-pressed', String(!audio.muted));
+soundToggle.addEventListener('click', () => {
+  audio.setMuted(!audio.muted);
+  if (!audio.muted) audio.unlock();
+  soundToggle.setAttribute('aria-pressed', String(!audio.muted));
+  try {
+    localStorage.setItem(muteKey, String(audio.muted));
+  } catch {
+    // Sound can still be toggled when storage is blocked.
+  }
+  canvas.focus({ preventScroll: true });
+});
+viewToggle.addEventListener('click', () => {
+  if (viewToggle.disabled) return;
+  viewPreference = viewPreference === 'first' ? 'third' : 'first';
+  try {
+    localStorage.setItem(viewKey, viewPreference);
+  } catch {
+    // The view still changes when storage is blocked.
+  }
+  syncView();
+  canvas.focus({ preventScroll: true });
+});
 const controls = { left: false, right: false, front: false, back: false, jump: false };
 const keys = {
   ArrowLeft: 'left', a: 'left', ArrowRight: 'right', d: 'right',
@@ -100,6 +137,15 @@ function applyInteraction({ effect, giftName, count = 1, simulated }) {
   $('last-gift').textContent = applied
     ? `${source} triggered ${interaction.name}.`
     : `${interaction.name} is unavailable right now.`;
+  syncView();
+}
+
+function testInteraction(id) {
+  if (!connection.simulate(id)) applyInteraction({ effect: id, simulated: true });
+  if (renderer) {
+    gameShell.scrollIntoView({ block: 'start' });
+    canvas.focus({ preventScroll: true });
+  }
 }
 
 function applyGiftMappings() {
@@ -127,13 +173,7 @@ for (const id of GIFT_SLOTS) {
   giftCards[id] = {
     title: row.querySelector('strong'), detail: row.querySelector('.effect-detail'), gift: row.querySelector('.gift-name'), button,
   };
-  button.addEventListener('click', () => {
-    if (!connection.simulate(id)) applyInteraction({ effect: id, simulated: true });
-    if (renderer) {
-      gameShell.scrollIntoView({ block: 'start' });
-      canvas.focus({ preventScroll: true });
-    }
-  });
+  button.addEventListener('click', () => testInteraction(id));
   $('effects').append(row);
 
   const field = document.createElement('label');
@@ -147,6 +187,67 @@ for (const id of GIFT_SLOTS) {
 }
 updateLevelView();
 
+const catalogueEntries = levels.flatMap((level) => giftInteractionsForLevel(level.index).map((interaction) => ({
+  ...interaction,
+  level,
+  searchText: `${interaction.key} ${interaction.name} ${interaction.description} ${level.name} level ${level.index + 1}`.toLowerCase(),
+})));
+const catalogueSearch = $('catalogue-search');
+const cataloguePageSize = 12;
+let cataloguePage = 0;
+let catalogueGiftNames = levels.map((level) => giftMappingsForLevel(mappings, level.index));
+
+function drawCatalogue() {
+  const query = catalogueSearch.value.trim().toLowerCase();
+  const levelMatch = /^([0-9]+)$/.exec(query) ?? /\blevel\s+([0-9]+)\b/.exec(query);
+  const terms = (levelMatch ? query.replace(levelMatch[0], '').trim() : query).split(/\s+/);
+  const matches = catalogueEntries.filter(({ level, id, searchText }) => {
+    const gift = catalogueGiftNames[level.index][id].toLowerCase();
+    return (!levelMatch || level.index + 1 === Number(levelMatch[1])) && terms.every((term) => searchText.includes(term) || gift.includes(term));
+  });
+  const totalPages = Math.max(1, Math.ceil(matches.length / cataloguePageSize));
+  cataloguePage = Math.min(cataloguePage, totalPages - 1);
+  const start = cataloguePage * cataloguePageSize;
+  const rows = matches.slice(start, start + cataloguePageSize).map((entry) => {
+    const row = document.createElement('li');
+    row.className = 'catalogue-result';
+    row.innerHTML = '<div><strong></strong><p class="catalogue-description"></p><p class="catalogue-gift"></p></div><button class="test" type="button">Jump and test</button>';
+    const levelNumber = entry.level.index + 1;
+    const gift = catalogueGiftNames[entry.level.index][entry.id];
+    setText(row.querySelector('strong'), entry.name);
+    setText(row.querySelector('.catalogue-description'), entry.description);
+    setText(row.querySelector('.catalogue-gift'), `Level ${levelNumber}, ${entry.level.name}. ${gift ? `Gift ${gift}` : 'Test only'}`);
+    const button = row.querySelector('button');
+    button.setAttribute('aria-label', `Jump to level ${levelNumber} and test ${entry.name}`);
+    button.dataset.levelIndex = String(entry.level.index);
+    button.dataset.effectId = entry.id;
+    button.dataset.interactionKey = entry.key;
+    button.addEventListener('click', () => {
+      selectLevel(entry.level.index);
+      testInteraction(entry.id);
+    });
+    return row;
+  });
+  $('catalogue-results').replaceChildren(...rows);
+  setText($('catalogue-count'), `${matches.length.toLocaleString()} ${matches.length === 1 ? 'interaction' : 'interactions'}`);
+  $('catalogue-empty').hidden = matches.length > 0;
+  $('catalogue-pages').hidden = totalPages < 2;
+  setText($('catalogue-page'), `Page ${cataloguePage + 1} of ${totalPages}`);
+  $('catalogue-prev').disabled = cataloguePage === 0;
+  $('catalogue-next').disabled = cataloguePage + 1 === totalPages;
+}
+
+catalogueSearch.addEventListener('input', () => { cataloguePage = 0; drawCatalogue(); });
+$('catalogue-clear').addEventListener('click', () => {
+  catalogueSearch.value = '';
+  cataloguePage = 0;
+  drawCatalogue();
+  catalogueSearch.focus();
+});
+$('catalogue-prev').addEventListener('click', () => { cataloguePage--; drawCatalogue(); });
+$('catalogue-next').addEventListener('click', () => { cataloguePage++; drawCatalogue(); });
+drawCatalogue();
+
 $('mappings').addEventListener('submit', (event) => {
   event.preventDefault();
   const next = Object.fromEntries([...new FormData(event.currentTarget)].map(([id, value]) => [id, value.trim()]));
@@ -157,6 +258,8 @@ $('mappings').addEventListener('submit', (event) => {
   }
   mappings = next;
   applyGiftMappings();
+  catalogueGiftNames = levels.map((level) => giftMappingsForLevel(mappings, level.index));
+  drawCatalogue();
   try {
     localStorage.setItem('biscuit-rising-gifts', JSON.stringify(mappings));
     $('mapping-status').textContent = 'Gift mappings saved.';
@@ -197,11 +300,13 @@ function updateLevelView() {
 }
 
 function enterLevel(focusGame = true) {
+  audio.stop();
   try {
     localStorage.setItem(progressKey, String(game.level.index));
   } catch {
     // The current level still changes when storage is blocked.
   }
+  syncView();
   if (game.level.index === 0) follow.reset(game);
   else alignRoute();
   renderer?.setLevel?.(game.level);
@@ -212,12 +317,13 @@ function enterLevel(focusGame = true) {
   updateLevelView();
   if (focusGame) canvas.focus({ preventScroll: true });
 }
-levelSelect.addEventListener('change', () => {
-  const level = levels[Number(levelSelect.value)];
-  if (!level || level.index === game.level.index) return;
+function selectLevel(index) {
+  const level = levels[index];
+  if (!level || (level.index === game.level.index && !game.levelComplete)) return;
   game = createGame(level.index);
   enterLevel(false);
-});
+}
+levelSelect.addEventListener('change', () => selectLevel(Number(levelSelect.value)));
 $('restart').addEventListener('click', () => {
   const bestY = game.bestY;
   game = createGame(game.level.index);
@@ -309,6 +415,19 @@ function setText(element, text) {
   if (element.textContent !== text) element.textContent = text;
 }
 
+function syncView() {
+  const remaining = game.levelComplete ? 0 : Math.ceil(game.effects.perspective ?? 0);
+  const locked = remaining > 0;
+  const view = locked ? (viewPreference === 'first' ? 'third' : 'first') : viewPreference;
+  if (follow.view !== view) follow.setView(view);
+  if (viewToggle.disabled !== locked) viewToggle.disabled = locked;
+  const pressed = String(view === 'first');
+  if (viewToggle.getAttribute('aria-pressed') !== pressed) viewToggle.setAttribute('aria-pressed', pressed);
+  $('view-lock').hidden = !locked;
+  setText($('view-lock'), locked ? `(${remaining}s lock)` : '');
+  return locked ? `View locked in ${view === 'first' ? 'first' : 'third'} person for ${remaining}s.` : '';
+}
+
 const touch = Object.fromEntries([...document.querySelectorAll('[data-control]')].map((button) => [button.dataset.control, button]));
 let previous = performance.now();
 let remaining = 0;
@@ -327,12 +446,18 @@ function frame(now) {
     remaining -= 1 / 120;
   }
 
+  const viewNotice = syncView();
+  audio.update(game);
   renderer.draw(game, dt, reduceMotion.matches);
   setText($('altitude'), `${Math.floor(game.bestY / 10)} m`);
-  const active = Object.entries(game.effects).filter(([, duration]) => duration > 0)
-    .map(([id, duration]) => `${effects[id].name} ${Math.ceil(duration)}s`);
+  const lockedDirection = directionNames[game.lockedDirection];
+  const active = Object.entries(game.effects).filter(([id, duration]) => id !== 'perspective' && GIFT_EFFECT_NAMES[id] && duration > 0)
+    .map(([id, duration]) => {
+      const name = id === 'directionLock' && lockedDirection ? `${lockedDirection} control lock` : GIFT_EFFECT_NAMES[id];
+      return `${name} ${Math.ceil(duration)}s`;
+    });
   const warning = game.dragon?.phase === 'warning' ? 'Dragon incoming. Jump or dodge.' : '';
-  const notice = warning || game.notice || active.join(' / ');
+  const notice = [warning || game.notice || active.join(' / '), viewNotice].filter(Boolean).join(' ');
   $('notice').hidden = !notice || game.levelComplete || game.won;
   setText($('notice'), notice || '');
   if ((game.levelComplete || game.won) && $('finish').hidden) {
