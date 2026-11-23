@@ -251,7 +251,7 @@ test("a fast fall lands on the first visible solid surface it hits", () => {
 });
 
 test("a moving lift pushes the player along its side and carries the player on top", () => {
-  const platform = { ...levels[1].platforms.find(({ kind }) => kind === "moving"), colliders: undefined, footprint: undefined, landing: undefined };
+  const platform = { ...levels[1].platforms.find(({ kind }) => kind === "moving"), mesh: undefined, footprint: undefined, landing: undefined };
   const fixture = () => {
     const game = createGame(1);
     game.level = { ...game.level, platforms: [platform] };

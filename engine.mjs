@@ -1,3 +1,4 @@
+import { buildMeshCollider, meshSurface, meshSupport, sweepMesh } from "./mesh-collision.mjs";
 import { levels } from "./levels.mjs";
 export { LEVEL_COUNT, levels } from "./levels.mjs";
 
@@ -51,41 +52,32 @@ function containsPoint(shape, x, z) {
   return true;
 }
 
-export function platformSurface(platform, x, z) {
-  if (!platform.colliders || platform.slope) {
-    return containsPoint(platform, x, z) ? platformTop(platform, x, z) : null;
-  }
+const meshCache = new WeakMap();
 
-  const u = (x - platform.x) / platform.w;
-  const v = (z - platform.z) / platform.d;
-  if (u < 0 || u > 1 || v < 0 || v > 1) return null;
-  let top = -Infinity;
-  for (const part of platform.colliders) {
-    if (part.top > top && containsPoint(part, u, v)) top = part.top;
+function colliderFor(platform) {
+  const source = platform.mesh;
+  if (!source) return null;
+  if (!meshCache.has(source)) meshCache.set(source, new Map());
+  const variants = meshCache.get(source);
+  const key = `${platform.w}:${platform.thickness}:${platform.d}:${Boolean(platform.quarterTurn)}`;
+  if (!variants.has(key)) variants.set(key, buildMeshCollider(
+    { ...platform, x: 0, y: 0, z: 0 }, [halfWidth, PLAYER_HEIGHT, halfDepth],
+  ));
+  return variants.get(key);
+}
+
+export function platformSurface(platform, x, z) {
+  if (platform.mesh) {
+    const height = meshSurface(colliderFor(platform), x - platform.x, z - platform.z);
+    return height === null ? null : platform.y + height;
   }
-  return top === -Infinity ? null : platform.y + (top - 1) * platform.thickness;
+  return containsPoint(platform, x, z) ? platformTop(platform, x, z) : null;
 }
 
 export function landingPoint(platform) {
   const [u, v] = platform.landing ?? [.5, .5];
-  let x = platform.x + u * platform.w;
-  let z = platform.z + v * platform.d;
-  let y = platformSurface(platform, x, z);
-  if (y !== null || !platform.colliders?.length) return { x, y: y ?? platform.y, z };
-
-  let bestDistance = Infinity;
-  for (const part of platform.colliders) {
-    const centreX = part.x + part.w / 2;
-    const centreZ = part.z + part.d / 2;
-    if (!containsPoint(part, centreX, centreZ)) continue;
-    const height = platform.y + (part.top - 1) * platform.thickness;
-    const distance = Math.hypot((centreX - u) * platform.w, (centreZ - v) * platform.d);
-    if (y !== null && (height < y || (height === y && distance >= bestDistance))) continue;
-    x = platform.x + centreX * platform.w;
-    y = height;
-    z = platform.z + centreZ * platform.d;
-    bestDistance = distance;
-  }
+  const x = platform.x + u * platform.w;
+  const z = platform.z + v * platform.d;
   return { x, y: platformSurface(platform, x, z) ?? platform.y, z };
 }
 
@@ -296,23 +288,10 @@ function solidShape(shape) {
 }
 
 function solidPlatform(platform) {
-  const { x, y, z, w, d, thickness } = platform;
-  const parts = platform.colliders && !platform.slope
-    ? platform.colliders.map((part) => solidShape({
-      x: x + part.x * w,
-      y: y + (part.top - 1) * thickness,
-      z: z + part.z * d,
-      w: part.w * w,
-      d: part.d * d,
-      thickness: (part.top - part.bottom) * thickness,
-      footprint: part.footprint,
-    }))
-    : [solidShape(platform)];
   return {
+    ...solidShape(platform),
     platform,
-    parts,
-    min: Object.fromEntries(axes.map((axis) => [axis, Math.min(...parts.map((part) => part.min[axis]))])),
-    max: Object.fromEntries(axes.map((axis) => [axis, Math.max(...parts.map((part) => part.max[axis]))])),
+    mesh: colliderFor(platform),
     end: platform,
     offset: noMovement,
     delta: noMovement,
@@ -349,46 +328,78 @@ function firstContact(player, motion, groups, elapsed) {
 
     const start = { x: startX, y: startY, z: startZ };
     const travel = { x: dx, y: dy, z: dz };
-    for (const solid of group.parts) {
-      let entry = -Infinity;
-      let exit = Infinity;
-      let face;
-      for (const axis of solid.contactAxes) {
-        const tilted = axis === "slope";
-        let low, high, origin, relative;
-        if (typeof axis === "object") {
-          low = axis.low;
-          high = axis.high;
-          origin = axis.x * startX + axis.z * startZ;
-          relative = axis.x * dx + axis.z * dz;
-        } else {
-          low = solid.min[axis];
-          high = solid.max[axis];
-          origin = tilted ? start.y - solid.gradient * start[solid.slope.axis] : start[axis];
-          relative = tilted ? travel.y - solid.gradient * travel[solid.slope.axis] : travel[axis];
-        }
-        if (Math.abs(relative) < epsilon) {
-          if (origin <= low + epsilon || origin >= high - epsilon) {
-            entry = Infinity;
-            break;
-          }
-          continue;
-        }
-        const a = (low - origin) / relative;
-        const b = (high - origin) / relative;
-        if (Math.min(a, b) > entry || (tilted && Math.min(a, b) >= entry - epsilon)) {
-          entry = Math.min(a, b);
-          face = axis;
-        }
-        exit = Math.min(exit, Math.max(a, b));
-        if (entry > 1 || entry >= exit - epsilon) break;
+    if (group.mesh) {
+      const contact = sweepMesh(group.mesh, {
+        x: startX - group.platform.x, y: startY - group.platform.y, z: startZ - group.platform.z,
+      }, travel);
+      if (contact && (!hit || contact.time < hit.time)) hit = { ...contact, group };
+      continue;
+    }
+    const solid = group;
+    let entry = -Infinity;
+    let exit = Infinity;
+    let face;
+    for (const axis of solid.contactAxes) {
+      const tilted = axis === "slope";
+      let low, high, origin, relative;
+      if (typeof axis === "object") {
+        low = axis.low;
+        high = axis.high;
+        origin = axis.x * startX + axis.z * startZ;
+        relative = axis.x * dx + axis.z * dz;
+      } else {
+        low = solid.min[axis];
+        high = solid.max[axis];
+        origin = tilted ? start.y - solid.gradient * start[solid.slope.axis] : start[axis];
+        relative = tilted ? travel.y - solid.gradient * travel[solid.slope.axis] : travel[axis];
       }
-      if (entry >= -epsilon && entry <= 1 && entry < exit - epsilon && (!hit || entry < hit.time)) {
-        hit = { group, solid, axis: face, time: Math.max(0, entry) };
+      if (Math.abs(relative) < epsilon) {
+        if (origin <= low + epsilon || origin >= high - epsilon) {
+          entry = Infinity;
+          break;
+        }
+        continue;
       }
+      const a = (low - origin) / relative;
+      const b = (high - origin) / relative;
+      if (Math.min(a, b) > entry || (tilted && Math.min(a, b) >= entry - epsilon)) {
+        entry = Math.min(a, b);
+        face = axis;
+      }
+      exit = Math.min(exit, Math.max(a, b));
+      if (entry > 1 || entry >= exit - epsilon) break;
+    }
+    if (entry >= -epsilon && entry <= 1 && entry < exit - epsilon && (!hit || entry < hit.time)) {
+      hit = { group, solid, axis: face, time: Math.max(0, entry) };
     }
   }
   return hit;
+}
+
+function isWalkway(platform) {
+  return platform.slope || platform.kind === "stair" || platform.kind === "bridge";
+}
+
+function stepOntoMesh(player, motion, group, solids, elapsed) {
+  if (!player.grounded || Math.hypot(motion.x, motion.z) < epsilon) return false;
+  if (player.grounded !== group.platform && !isWalkway(player.grounded)) return false;
+
+  const { platform, offset, delta } = group;
+  const current = {
+    x: platform.x + offset.x + delta.x * elapsed,
+    y: platform.y + offset.y + delta.y * elapsed,
+    z: platform.z + offset.z + delta.z * elapsed,
+  };
+  const rise = meshSupport(group.mesh, {
+    x: player.x + motion.x - group.end.x,
+    y: player.y + maxStep - current.y,
+    z: player.z + motion.z - group.end.z,
+  }, maxStep);
+  const height = rise === null ? 0 : rise + current.y - player.y;
+  if (height <= epsilon || height > maxStep || firstContact(player, { ...noMovement, y: height }, solids, elapsed)) return false;
+
+  player.y += height;
+  return true;
 }
 
 function movePlayer(player, motion, solids) {
@@ -403,16 +414,33 @@ function movePlayer(player, motion, solids) {
     }
     elapsed += (1 - elapsed) * fraction;
     if (!hit) break;
-    const { axis, group, solid } = hit;
+    const { axis, group, solid, normal } = hit;
+    if (normal) {
+      if (normal.y >= 0 && normal.y < .82 && stepOntoMesh(player, motion, group, solids, elapsed)) continue;
+      const remaining = 1 - elapsed;
+      const alongNormal = axes.reduce((sum, key) => sum + normal[key] * (motion[key] - group.delta[key] * remaining), 0);
+      for (const key of axes) motion[key] -= normal[key] * Math.min(0, alongNormal);
+      if (normal.y >= .45 && player.vy <= 0) {
+        player.vy = 0;
+      } else if (normal.y <= -.45 && player.vy > 0) {
+        player.vy = 0;
+      } else {
+        const acrossNormal = normal.x * player.vx + normal.z * player.vz;
+        const horizontal = normal.x ** 2 + normal.z ** 2;
+        if (acrossNormal < 0 && horizontal > epsilon) {
+          player.vx -= normal.x * acrossNormal / horizontal;
+          player.vz -= normal.z * acrossNormal / horizontal;
+        }
+      }
+      continue;
+    }
     const top = solid.slope ? supportHeight(group.end, player) : solid.shape.y + group.end.y - group.platform.y;
     const height = top - player.y;
     if (axis === "slope") {
       motion.y = solid.gradient * motion[solid.slope.axis];
       player.vy = 0;
     } else if (axis !== "y" && player.grounded && elapsed < 1 &&
-      (player.grounded.kind === "stair" || group.platform.kind === "stair" ||
-        player.grounded.slope || group.platform.slope ||
-        (player.grounded === group.platform && group.platform.colliders)) &&
+      (isWalkway(player.grounded) || isWalkway(group.platform)) &&
       height > epsilon && height <= maxStep &&
       !firstContact(player, { ...noMovement, y: height }, solids, elapsed)) {
       player.y += height;
@@ -523,17 +551,22 @@ export function step(game, input, dt) {
       const x = player.x - group.end.x + group.platform.x;
       const z = player.z - group.end.z + group.platform.z;
       if (!overPlatform(x, z, group)) continue;
-      const walkingDown = player.grounded && carrier && (carrier.platform.slope || group.platform.slope ||
-        carrier.platform.kind === "stair" || group.platform.kind === "stair" ||
-        (carrier === group && group.platform.colliders));
-      for (const part of group.parts) {
-        if (!overPlatform(x, z, part)) continue;
-        const height = part.slope ? supportHeight(group.end, player) : part.shape.y + offsetY;
-        const gap = player.y - height;
-        if (height >= top && gap >= -epsilon && gap < (walkingDown ? maxStep : epsilon)) {
+      const walkingDown = player.grounded && carrier && (isWalkway(carrier.platform) || isWalkway(group.platform) || (carrier === group && group.mesh));
+      if (group.mesh) {
+        const height = meshSupport(group.mesh, {
+          x: x - group.platform.x, y: player.y - group.end.y, z: z - group.platform.z,
+        }, walkingDown ? maxStep : .002);
+        if (height !== null && height + group.end.y >= top) {
           support = group;
-          top = height;
+          top = height + group.end.y;
         }
+        continue;
+      }
+      const height = supportHeight(group.end, player);
+      const gap = player.y - height;
+      if (height >= top && gap >= -epsilon && gap < (walkingDown ? maxStep : epsilon)) {
+        support = group;
+        top = height;
       }
     }
   }

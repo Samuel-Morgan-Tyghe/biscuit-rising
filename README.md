@@ -1,6 +1,6 @@
 # Skybreak
 
-Skybreak is a solo third-person 3D climb through **50 levels** above the clouds. Run up stone stairs and ramps, cross timber bridges and jump between gear wheels, vehicles, giant food and other found objects. Touch each finish flag and choose **Ascend** to move higher. Every new level raises the hardest required jump. Later routes also mix in narrow landings, wider gaps and faster moving pieces. Falls return you to the start of your current level without damage.
+Skybreak is a solo third-person 3D climb through **50 levels** above the clouds. Run up stone stairs and ramps, cross timber bridges and jump between gear wheels, vehicles, giant food and other found objects. Touch each finish flag and choose **Ascend** to move higher. Later routes use higher jumps, narrower landings, wider gaps and faster moving pieces. Falls return you to the start of your current level without damage.
 
 ## Play the game
 
@@ -37,7 +37,7 @@ Level progress and gift settings belong to the browser origin, so the hosted and
 
 ## Visual assets
 
-The local asset pack includes an animated [Tevy hiker](assets/climber/README.md), Poly Haven cliff scans and props, and [18 playable obstacle models from eight Kenney packs](assets/obstacles/README.md). Jump onto the object itself. The gear wheels have open centres, and the landing marker points to solid ground. See the [model credits and licences](assets/README.md), [cliff and steel materials](assets/materials/README.md) and [panorama prompt](assets/skybreak-matte.md).
+The local asset pack includes an animated [Tevy hiker](assets/climber/README.md), Poly Haven cliff scans and props, and [18 playable obstacle models from eight Kenney packs](assets/obstacles/README.md). Jump onto the object itself. Collision uses the same triangles as the visible models, so gaps stay open and the landing marker points to solid ground. See the [model credits and licences](assets/README.md), [cliff and steel materials](assets/materials/README.md) and [panorama prompt](assets/skybreak-matte.md).
 
 ## Run the checks
 

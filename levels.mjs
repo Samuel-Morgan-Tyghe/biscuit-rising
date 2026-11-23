@@ -190,7 +190,7 @@ for (let index = 0; index < LEVEL_COUNT; index += 1) {
     };
   });
   const platforms = routePlatforms.map((platform, order) =>
-    withObstacle(platform, routePlatforms[order - 1], routePlatforms[order + 1], index, order));
+    withObstacle(platform, routePlatforms[order - 1], index, order));
   const point = ({ x, y, z, w, d }) => ({ x: x + w / 2, y, z: z + d / 2 });
   levels.push({ index, name, platforms, spawn: point(platforms[0]), goal: point(platforms.at(-1)), baseY, visualBaseY });
 }

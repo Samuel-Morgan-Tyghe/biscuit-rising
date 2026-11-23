@@ -260,11 +260,11 @@ function bridgeDetails(group, w, d, thickness) {
   const point = (along, up, across) => alongX ? [along, up, across] : [across, up, along];
 
   for (let along = -span / 2 + 8; along < span / 2 - 5; along += 8) {
-    box(group, '#382e24', alongX ? .34 : width - 1, .16, alongX ? width - 1 : .34, ...point(along, .07, 0));
+    box(group, '#382e24', alongX ? .34 : width - 1, .16, alongX ? width - 1 : .34, ...point(along, -.079, 0));
   }
   for (const side of [-1, 1]) {
     const edge = side * (width / 2 - 2);
-    beam(group, point(-span / 2, -.7, edge), point(span / 2, -.7, edge), 3, '#604937');
+    beam(group, point(-span / 2, -1.5, edge), point(span / 2, -1.5, edge), 3, '#604937');
     let from = point(-span / 2, -4, edge);
     for (let i = 1; i <= 8; i++) {
       const amount = i / 8;
@@ -488,16 +488,22 @@ function constructionBraces(group, platform, design) {
 
 function buildObstacle(platform) {
   const group = new THREE.Group();
-  const { w, d, thickness, colliders } = platform;
-  const fallback = new THREE.InstancedMesh(cube, matte(obstacleModels[platform.obstacle].colour), colliders.length);
-  const transform = new THREE.Matrix4();
-  for (const [index, cell] of colliders.entries()) {
-    const height = (cell.top - cell.bottom) * thickness;
-    transform.makeScale(cell.w * w, height, cell.d * d);
-    transform.setPosition((cell.x + cell.w / 2 - .5) * w,
-      (cell.top - 1) * thickness - height / 2, (cell.z + cell.d / 2 - .5) * d);
-    fallback.setMatrixAt(index, transform);
+  const { w, d, thickness, mesh, quarterTurn } = platform;
+  const positions = new Float32Array(mesh.positions.length);
+  for (let vertex = 0; vertex < positions.length; vertex += 3) {
+    const x = mesh.positions[vertex], y = mesh.positions[vertex + 1], z = mesh.positions[vertex + 2];
+    positions[vertex] = (quarterTurn ? z - .5 : x - .5) * w;
+    positions[vertex + 1] = (y - 1) * thickness;
+    positions[vertex + 2] = (quarterTurn ? .5 - x : z - .5) * d;
   }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
+  geometry.computeVertexNormals();
+  const fallback = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
+    color: obstacleModels[platform.obstacle].colour, side: THREE.DoubleSide, roughness: .85,
+  }));
+  fallback.castShadow = fallback.receiveShadow = true;
   group.add(fallback);
   return { group, fallback };
 }
@@ -505,12 +511,12 @@ function buildObstacle(platform) {
 function fitObstacle(object, platform, asset) {
   const { w, d, thickness, quarterTurn } = platform;
   const oriented = new THREE.Group();
-  const model = asset.clone(true);
-  oriented.add(model);
-  if (quarterTurn) model.rotation.y += Math.PI / 2;
-  const visual = placeModel(oriented, object.group, [w, thickness, d], [0, -thickness, 0]);
+  oriented.add(asset.clone(true));
+  if (quarterTurn) oriented.rotation.y = Math.PI / 2;
+  const visual = placeModel(oriented, object.group, [w, thickness, d], [0, -thickness, 0], 0, true);
   object.fallback.removeFromParent();
-  object.fallback.dispose();
+  object.fallback.geometry.dispose();
+  object.fallback.material.dispose();
   object.surfaces = [];
   visual.traverse((mesh) => {
     if (!mesh.isMesh || !mesh.material.color) return;
@@ -598,9 +604,9 @@ function climber() {
   return { group, body, halo };
 }
 
-function placeModel(source, parent, size, position, heading = 0) {
+function placeModel(source, parent, size, position, heading = 0, precise = false) {
   const fitted = new THREE.Group();
-  const { min, max } = new THREE.Box3().setFromObject(source);
+  const { min, max } = new THREE.Box3().setFromObject(source, precise);
   const bounds = new THREE.Vector3().subVectors(max, min);
   const model = source.clone(true);
   const center = new THREE.Vector3().addVectors(min, max).multiplyScalar(.5);

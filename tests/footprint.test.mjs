@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createGame, landingPoint, platformPosition, platformSurface, PLAYER_HEIGHT, step } from "../engine.mjs";
+import { createGame, platformPosition, PLAYER_HEIGHT, step } from "../engine.mjs";
 
 const diamond = [[-.5, 0], [0, -.5], [.5, 0], [0, .5]];
 const round = Array.from({ length: 16 }, (_, index) => {
@@ -8,9 +8,9 @@ const round = Array.from({ length: 16 }, (_, index) => {
   return [.5 * Math.cos(angle), .5 * Math.sin(angle)];
 });
 
-function gameWithHull(footprint, player, kind = "stone", parts) {
+function gameWithHull(footprint, player, kind = "stone", mesh) {
   const game = createGame();
-  const platform = { x: 250, y: 200, z: 250, w: 100, d: 100, thickness: 20, footprint, kind, colliders: parts };
+  const platform = { x: 250, y: 200, z: 250, w: 100, d: 100, thickness: 20, footprint, kind, mesh };
   game.level = { ...game.level, platforms: [platform], goal: { x: 950, y: 450, z: 950 } };
   Object.assign(game.player, { grounded: null, ...player });
   return { game, platform, player: game.player };
@@ -62,64 +62,31 @@ test("a moving polygon carries the climber across both axes", () => {
   assert(Math.abs(player.z - end.z - 50) < 1e-7);
 });
 
-const ring = [
-  { x: 0, z: 0, w: .2, d: 1, top: 1, bottom: 0 },
-  { x: .8, z: 0, w: .2, d: 1, top: 1, bottom: 0 },
-  { x: .2, z: 0, w: .6, d: .2, top: 1, bottom: 0 },
-  { x: .2, z: .8, w: .6, d: .2, top: .6, bottom: 0 },
-];
+const triangularLedge = {
+  positions: Float32Array.of(0, 1, 0, 0, 1, 1, 1, 1, 0),
+  indices: Uint16Array.of(0, 1, 2),
+};
 
-test("an opening has air through the full model, with solid rim collision", () => {
-  const centre = gameWithHull(round, { x: 300, y: 350, z: 300, vy: -940 }, "stone", ring);
-  step(centre.game, {}, .26);
-  assert(centre.player.y < 180);
-  assert.equal(centre.player.grounded, null);
-  assert.equal(platformSurface(centre.platform, 300, 300), null);
-  const fallback = landingPoint(centre.platform);
-  assert.equal(platformSurface(centre.platform, fallback.x, fallback.z), fallback.y);
-  assert.notDeepEqual(fallback, { x: 300, y: 200, z: 300 });
+test("a narrow visible corner supports only an overlapping climber", () => {
+  const overlap = gameWithHull(undefined, { x: 312.99, y: 350, z: 312.99, vy: -940 }, "stone", triangularLedge);
+  step(overlap.game, {}, .26);
+  assert.equal(overlap.player.y, 200);
+  assert.equal(overlap.player.grounded, overlap.platform);
 
-  const beginning = { x: 300, y: 130, z: 300, vy: 754 };
-  const through = gameWithHull(round, beginning, "stone", ring);
-  step(through.game, {}, .15);
-  assert(through.player.y > through.platform.y);
-
-  const rim = gameWithHull(round, { x: 300, y: 350, z: 340, vy: -940 }, "stone", ring);
-  step(rim.game, {}, .26);
-  assert.equal(rim.player.grounded, rim.platform);
-  assert.equal(rim.game.lastPlatform, rim.platform);
-  assert.equal(rim.player.y, 192);
-  assert.equal(platformSurface(rim.platform, 300, 340), rim.player.y);
-  rim.platform.landing = [.5, .9];
-  assert.deepEqual(landingPoint(rim.platform), { x: 300, y: 192, z: 340 });
+  const outside = gameWithHull(undefined, { x: 313.01, y: 350, z: 313.01, vy: -940 }, "stone", triangularLedge);
+  step(outside.game, {}, .26);
+  assert(outside.player.y < 180);
+  assert.equal(outside.player.grounded, null);
 });
 
-test("moving rim parts carry the climber with the model rather than the part offset", () => {
-  const { game, player, platform } = gameWithHull(round, {}, "moving", ring);
+test("a moving mesh carries the climber with the object", () => {
+  const { game, player, platform } = gameWithHull(undefined, {}, "moving", triangularLedge);
   const start = platformPosition(platform, 0);
   const end = platformPosition(platform, .1);
-  Object.assign(player, { x: start.x + 50, y: start.y - 8, z: start.z + 90, grounded: platform });
+  Object.assign(player, { x: start.x + 25, y: start.y, z: start.z + 25, grounded: platform });
   step(game, {}, .1);
   assert.equal(player.grounded, platform);
-  assert(Math.abs(player.x - end.x - 50) < 1e-7);
-  assert(Math.abs(player.z - end.z - 90) < 1e-7);
-  assert.equal(player.y, end.y - 8);
-});
-
-test("walking between nearby top heights on one model does not require a jump", () => {
-  const parts = [
-    { x: 0, z: 0, w: .5, d: 1, top: .75, bottom: 0 },
-    { x: .5, z: 0, w: .5, d: 1, top: 1, bottom: 0 },
-  ];
-  const { game, player, platform } = gameWithHull(undefined, { x: 275, y: 195, z: 300 }, "stone", parts);
-  player.grounded = platform;
-  for (let frame = 0; frame < 25; frame += 1) step(game, { right: true }, 1 / 120);
-  assert.equal(player.grounded, platform);
-  assert.equal(player.y, 200);
-  assert(player.x > 315);
-
-  for (let frame = 0; frame < 41; frame += 1) step(game, { left: true }, 1 / 120);
-  assert.equal(player.grounded, platform);
-  assert.equal(player.y, 195);
-  assert(player.x < 287);
+  assert(Math.abs(player.x - end.x - 25) < 1e-7);
+  assert(Math.abs(player.z - end.z - 25) < 1e-7);
+  assert.equal(player.y, end.y);
 });

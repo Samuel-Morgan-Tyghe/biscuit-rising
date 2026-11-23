@@ -1,4 +1,5 @@
-import { obstacleColliders } from './obstacle-colliders.mjs';
+import { obstacleMeshes } from './obstacle-meshes.mjs';
+import { buildMeshCollider, meshSurface, sweepMesh } from './mesh-collision.mjs';
 
 const pieces = [
   ['gear', '#b28d52'],
@@ -35,21 +36,24 @@ function headroom(platform, lower) {
   return Math.max(platform.thickness, platform.y - sway(platform) - lowerTop - 44);
 }
 
-const bounds = new Map();
-for (const [name, { nativeWidth, nativeDepth, primitives }] of Object.entries(obstacleColliders)) {
-  const turned = primitives.map(({ x, z, w, d, ...vertical }) => ({ x: z, z: 1 - x - w, w: d, d: w, ...vertical }));
-  bounds.set(name, { nativeWidth, nativeDepth, primitives, turned });
-}
+const markerMeshes = new Map();
 
-function contactHeight(pieces, x, z) {
-  let highest = -1;
-  for (const cell of pieces) {
-    if (x >= cell.x && x <= cell.x + cell.w && z >= cell.z && z <= cell.z + cell.d) highest = Math.max(highest, cell.top);
+function markerMesh(model, mesh, quarterTurn) {
+  const key = `${model}:${quarterTurn}`;
+  if (!markerMeshes.has(key)) {
+    markerMeshes.set(key, buildMeshCollider({ x: 0, y: 1, z: 0, w: 1, d: 1, thickness: 1, mesh, quarterTurn }, [0, 0, 0]));
   }
-  return highest;
+  return markerMeshes.get(key);
 }
 
-function chooseLanding(platform, pieces, previous, isGear) {
+function gearHasRoom(platform) {
+  const { x, y, z, w, d, thickness } = platform;
+  const mesh = buildMeshCollider(platform, [13, 43, 13]);
+  return !sweepMesh(mesh, { x: x + w / 2, y: y + 2, z: z + d / 2 },
+    { x: 0, y: -(thickness + 47), z: 0 });
+}
+
+function chooseLanding(platform, mesh, previous, isGear) {
   let idealX = .5, idealZ = .5;
   if (isGear) {
     const dx = (previous.x + previous.w / 2 - platform.x) / platform.w - .5;
@@ -63,11 +67,11 @@ function chooseLanding(platform, pieces, previous, isGear) {
   const dx = 6 / platform.w, dz = 6 / platform.d;
   for (let row = 2; row <= 14; row++) for (let col = 2; col <= 14; col++) {
     const x = col / 16, z = row / 16;
-    const height = contactHeight(pieces, x, z);
-    if (height < 0) continue;
-    const neighbours = [contactHeight(pieces, x - dx, z), contactHeight(pieces, x + dx, z),
-      contactHeight(pieces, x, z - dz), contactHeight(pieces, x, z + dz)];
-    const support = neighbours.filter((top) => top >= height - .14).length;
+    const height = meshSurface(mesh, x, z);
+    if (height === null) continue;
+    const neighbours = [meshSurface(mesh, x - dx, z), meshSurface(mesh, x + dx, z),
+      meshSurface(mesh, x, z - dz), meshSurface(mesh, x, z + dz)];
+    const support = neighbours.filter((top) => top !== null && top >= height - .14).length;
     const score = height * 2 + support * .17 - Math.hypot(x - idealX, z - idealZ) * (isGear ? 5 : 3);
     if (score > bestScore) {
       bestScore = score;
@@ -77,7 +81,7 @@ function chooseLanding(platform, pieces, previous, isGear) {
   return chosen;
 }
 
-export function withObstacle(platform, previous, next, levelIndex, order) {
+export function withObstacle(platform, previous, levelIndex, order) {
   if (platform.start || traversals.has(platform.kind)) return platform;
   const isFirstJump = levelIndex === 0 && order === 1;
   const start = isFirstJump ? 0 : (levelIndex * 7 + order * 5) % pieces.length;
@@ -86,19 +90,18 @@ export function withObstacle(platform, previous, next, levelIndex, order) {
   let index = start;
   while (true) {
     const [model] = pieces[index];
-    const { nativeWidth, nativeDepth, primitives, turned } = bounds.get(model);
+    const mesh = obstacleMeshes[model];
+    const { nativeWidth, nativeDepth } = mesh;
     const quarterTurn = (platform.w / platform.d > 1.22 && nativeDepth > nativeWidth * 1.15) ||
       (platform.d / platform.w > 1.22 && nativeWidth > nativeDepth * 1.15);
-    const colliders = quarterTurn ? turned : primitives;
     const gear = model === 'gear';
-    const centreBlocked = gear && colliders.some(({ x, z, w, d }) =>
-      x < .5 + 13 / platform.w && x + w > .5 - 13 / platform.w &&
-      z < .5 + 13 / platform.d && z + d > .5 - 13 / platform.d);
     const minimum = (tallModels[model] ?? 0) * span;
-    if (minimum <= available && !centreBlocked) {
+    if (minimum <= available) {
       const thickness = tallModels[model] ? Math.min(available, Math.max(platform.thickness, span * .43)) : platform.thickness;
-      const landing = chooseLanding(platform, colliders, previous, gear);
-      return { ...platform, obstacle: model, quarterTurn, colliders, thickness, landing };
+      const fitted = { ...platform, obstacle: model, quarterTurn, mesh, thickness };
+      if (!gear || gearHasRoom(fitted)) {
+        return { ...fitted, landing: chooseLanding(platform, markerMesh(model, mesh, quarterTurn), previous, gear) };
+      }
     }
     index = (index + 1) % pieces.length;
   }

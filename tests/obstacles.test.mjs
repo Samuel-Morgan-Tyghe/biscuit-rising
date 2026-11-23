@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { landingPoint, levels, platformSurface } from '../engine.mjs';
+import { obstacleMeshes } from '../obstacle-meshes.mjs';
 import { obstacleModels } from '../obstacles.mjs';
 
 test('every bundled obstacle has solid geometry and a guide on its visible landing surface', async () => {
@@ -10,10 +11,9 @@ test('every bundled obstacle has solid geometry and a guide on its visible landi
   assert.deepEqual(used, new Set(Object.keys(obstacleModels)));
 
   for (const platform of platforms) {
-    assert(platform.colliders.length > 0);
-    for (const cell of platform.colliders) {
-      assert(cell.top > cell.bottom && cell.bottom >= 0 && cell.top <= 1);
-    }
+    assert.equal(platform.mesh, obstacleMeshes[platform.obstacle]);
+    assert(platform.mesh.indices.length > 0);
+    assert.equal(platform.mesh.indices.length % 3, 0);
     if (platform.obstacle === 'firetruck' || platform.obstacle === 'delivery-van') {
       assert(platform.thickness >= Math.max(platform.w, platform.d) * .32);
     }
