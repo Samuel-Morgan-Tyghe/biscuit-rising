@@ -205,8 +205,20 @@ function clipsFootprint(solid, left, right, near, far) {
 }
 
 function overlapsSolid(game, platform) {
-  const { player } = game;
-  const solid = platformPosition(platform, game.time);
+  const parent = platformPosition(platform, game.time);
+  const solids = parent.colliders?.map(part => ({
+    x: parent.x + part.x * parent.w,
+    z: parent.z + part.z * parent.d,
+    w: part.w * parent.w,
+    d: part.d * parent.d,
+    y: parent.y - (1 - part.top) * parent.thickness,
+    thickness: (part.top - part.bottom) * parent.thickness,
+    footprint: part.footprint,
+  })) ?? [parent];
+  return solids.some(solid => overlapsPiece(game.player, solid));
+}
+
+function overlapsPiece(player, solid) {
   const left = Math.max(solid.x, player.x - PLAYER_WIDTH / 2);
   const right = Math.min(solid.x + solid.w, player.x + PLAYER_WIDTH / 2);
   const near = Math.max(solid.z, player.z - PLAYER_DEPTH / 2);

@@ -1,8 +1,8 @@
 import * as THREE from './vendor/three.module.min.js';
 import { GLTFLoader } from './vendor/gltf-loader.mjs';
-import { LEVEL_COUNT, PLAYER_HEIGHT, platformTop } from './engine.mjs';
+import { LEVEL_COUNT, PLAYER_HEIGHT, landingPoint, platformSurface, platformTop } from './engine.mjs';
 import { platformDesign } from './platform-design.mjs';
-import { containsFootprint, obstacleModels } from './obstacles.mjs';
+import { obstacleModels } from './obstacles.mjs';
 
 const colours = {
   iron: '#233740', rails: '#60787a', bolts: '#d5d7bf', markings: '#f1bb63',
@@ -486,51 +486,38 @@ function constructionBraces(group, platform, design) {
   }
 }
 
-function footprintSolid(platform, depth) {
-  const outline = new THREE.Shape();
-  for (const [index, [x, z]] of platform.footprint.entries()) {
-    const method = index === 0 ? 'moveTo' : 'lineTo';
-    outline[method](x * platform.w, -z * platform.d);
-  }
-  outline.closePath();
-  const geometry = new THREE.ExtrudeGeometry(outline, { depth, bevelEnabled: false, curveSegments: 1 });
-  geometry.rotateX(-Math.PI / 2);
-  geometry.translate(0, -depth, 0);
-  return geometry;
-}
-
 function buildObstacle(platform) {
   const group = new THREE.Group();
-  const art = platformDesign(platform.designSeed);
-  const colour = new THREE.Color(obstacleModels[platform.obstacle].colour).lerp(new THREE.Color(art.colour), .16);
-  const material = new THREE.MeshStandardMaterial({ color: colour, roughness: .72, side: THREE.DoubleSide });
-  const deck = new THREE.Mesh(footprintSolid(platform, 1.6), material);
-  deck.receiveShadow = true;
-  const fallback = new THREE.Mesh(footprintSolid(platform, platform.thickness - 1.6).translate(0, -1.6, 0), matte(art.colour));
-  fallback.castShadow = fallback.receiveShadow = true;
-  const edgePoints = platform.footprint.map(([x, z]) => new THREE.Vector3(x * platform.w, .24, z * platform.d));
-  const edge = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(edgePoints),
-    new THREE.LineBasicMaterial({ color: '#fff0ca', transparent: true, opacity: .78 }));
-  group.add(fallback, deck, edge);
-  constructionBraces(group, platform, art);
-  return { group, material, colour, fallback };
+  const { w, d, thickness, colliders } = platform;
+  const fallback = new THREE.InstancedMesh(cube, matte(obstacleModels[platform.obstacle].colour), colliders.length);
+  const transform = new THREE.Matrix4();
+  for (const [index, cell] of colliders.entries()) {
+    const height = (cell.top - cell.bottom) * thickness;
+    transform.makeScale(cell.w * w, height, cell.d * d);
+    transform.setPosition((cell.x + cell.w / 2 - .5) * w,
+      (cell.top - 1) * thickness - height / 2, (cell.z + cell.d / 2 - .5) * d);
+    fallback.setMatrixAt(index, transform);
+  }
+  group.add(fallback);
+  return { group, fallback };
 }
 
 function fitObstacle(object, platform, asset) {
-  const { w, d, thickness } = platform;
+  const { w, d, thickness, quarterTurn } = platform;
   const oriented = new THREE.Group();
   const model = asset.clone(true);
   oriented.add(model);
-  const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
-  if (w / d > 1.22 && size.z > size.x * 1.15 || d / w > 1.22 && size.x > size.z * 1.15) {
-    model.rotation.y += Math.PI / 2;
-  }
-  placeModel(oriented, object.group, [w * .98, thickness - .85, d * .98], [0, -thickness, 0]);
-  object.fallback.visible = false;
-  object.material.transparent = true;
-  object.material.depthWrite = false;
-  object.material.opacity = .24;
-  object.material.needsUpdate = true;
+  if (quarterTurn) model.rotation.y += Math.PI / 2;
+  const visual = placeModel(oriented, object.group, [w, thickness, d], [0, -thickness, 0]);
+  object.fallback.removeFromParent();
+  object.fallback.dispose();
+  object.surfaces = [];
+  visual.traverse((mesh) => {
+    if (!mesh.isMesh || !mesh.material.color) return;
+    mesh.material = mesh.material.clone();
+    mesh.userData.stageMaterial = true;
+    object.surfaces.push({ material: mesh.material, colour: mesh.material.color.clone() });
+  });
 }
 
 function buildLedge(platform, textures) {
@@ -780,9 +767,10 @@ function disposeStage(stage) {
   const reusable = new Set(materials.values());
   const geometry = new Set(), stageMaterials = new Set();
   stage.traverse((mesh) => {
-    if (!(mesh.isMesh || mesh.isLine) || mesh.userData.sharedModel) return;
-    if (![cube, sphere, cylinder].includes(mesh.geometry)) geometry.add(mesh.geometry);
-    if (reusable.has(mesh.material)) return;
+    if (!(mesh.isMesh || mesh.isLine)) return;
+    if (mesh.isInstancedMesh) mesh.dispose();
+    if (!mesh.userData.sharedModel && ![cube, sphere, cylinder].includes(mesh.geometry)) geometry.add(mesh.geometry);
+    if (mesh.userData.sharedModel && !mesh.userData.stageMaterial || reusable.has(mesh.material)) return;
     stageMaterials.add(mesh.material);
   });
   stage.removeFromParent();
@@ -920,12 +908,16 @@ export function createRenderer(canvas, world, follow) {
       for (const [index, platform] of platforms.entries()) {
         const at = platformPosition(platform, time);
         const { x, y, z, w, d } = at;
-        const { group, material, colour } = objects[index];
+        const { group, material, colour, surfaces } = objects[index];
         group.position.set(x + w / 2, y, z + d / 2);
-        material.color.copy(effects.slippery > 0 ? ice : colour);
-        if (state.x >= x && state.x <= x + w && state.z >= z && state.z <= z + d && containsFootprint(at, state.x, state.z)) {
-          const top = platformTop(at, state.x, state.z);
-          if (state.y + 1 >= top && (support === undefined || top > support.y)) support = { y: top, platform: at };
+        if (material) material.color.copy(effects.slippery > 0 ? ice : colour);
+        for (const surface of surfaces ?? []) {
+          surface.material.color.copy(surface.colour);
+          if (effects.slippery > 0) surface.material.color.lerp(ice, .6);
+        }
+        if (state.x >= x && state.x <= x + w && state.z >= z && state.z <= z + d) {
+          const top = platformSurface(at, state.x, state.z);
+          if (top !== null && state.y + 1 >= top && (support === undefined || top > support.y)) support = { y: top, platform: at };
         }
       }
 
@@ -937,8 +929,8 @@ export function createRenderer(canvas, world, follow) {
       landing.visible = Boolean(next) && !game.levelComplete;
       if (landing.visible) {
         const at = platformPosition(next, time);
-        const x = at.x + at.w / 2, z = at.z + at.d / 2;
-        landing.position.set(x, platformTop(at, x, z) + 1.5, z);
+        const { x, y, z } = landingPoint(at);
+        landing.position.set(x, y + 1.5, z);
         if (at.slope) ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), rampNormal(at));
         else ring.rotation.set(-Math.PI / 2, 0, 0);
         arrow.position.y = 26 + (reducedMotion ? 0 : Math.sin(time * 5) * 4);

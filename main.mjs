@@ -1,4 +1,4 @@
-import { WIDTH, DEPTH, LEVEL_COUNT, levels, advanceLevel, createGame, step, triggerGiftInteraction, platformPosition, targetPlatform } from './engine.mjs';
+import { WIDTH, DEPTH, LEVEL_COUNT, levels, advanceLevel, createGame, step, triggerGiftInteraction, landingPoint, platformPosition, targetPlatform } from './engine.mjs';
 import { DEFAULT_GIFTS, createTikFinity } from './tikfinity.mjs';
 import { GIFT_EFFECT_NAMES, GIFT_SLOTS, giftInteractionsForLevel, giftMappingsForLevel } from './level-gifts.mjs';
 import { createRenderer } from './render.mjs';
@@ -342,9 +342,9 @@ function alignRoute() {
     follow.reset(game);
     return;
   }
-  const ledge = platformPosition(next, game.time);
+  const ledge = landingPoint(platformPosition(next, game.time));
   const { x, z } = game.player;
-  follow.reset(game, Math.atan2(x - ledge.x - ledge.w / 2, z - ledge.z - ledge.d / 2));
+  follow.reset(game, Math.atan2(x - ledge.x, z - ledge.z));
 }
 $('align-camera').addEventListener('click', () => {
   alignRoute();

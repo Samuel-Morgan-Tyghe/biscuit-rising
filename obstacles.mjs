@@ -1,37 +1,28 @@
-const round = Array.from({ length: 16 }, (_, index) => {
-  const angle = index / 16 * 2 * Math.PI;
-  return [.49 * Math.cos(angle), .49 * Math.sin(angle)];
-});
-const bevel = [[-.34, -.5], [.34, -.5], [.5, -.34], [.5, .34], [.34, .5], [-.34, .5], [-.5, .34], [-.5, -.34]];
-const capsule = [[-.35, -.5], [.22, -.5], [.48, -.27], [.5, .09], [.31, .48], [-.24, .5], [-.48, .27], [-.5, -.12]];
-const roof = [[-.43, -.5], [.34, -.5], [.49, -.28], [.42, .49], [-.32, .49], [-.49, .23]];
-const rock = [[-.11, -.49], [.31, -.43], [.49, -.16], [.42, .28], [.16, .49], [-.34, .39], [-.49, .11], [-.41, -.33]];
-const track = [[-.50, -.47], [-.02, -.49], [.23, -.22], [.49, .16], [.48, .47], [.01, .49], [-.30, .15], [-.47, -.17]];
+import { obstacleColliders } from './obstacle-colliders.mjs';
 
 const pieces = [
-  ['gear', round, '#b28d52'],
-  ['delivery-van', roof, '#71b8a5'],
-  ['giant-maki', round, '#96aa58'],
-  ['workbench', bevel, '#ad7851'],
-  ['lumber-wagon', capsule, '#a7845e'],
-  ['firetruck', roof, '#c96d66'],
-  ['flat-rock', rock, '#9eafa9'],
-  ['shopping-cart', roof, '#b4c6c8'],
-  ['giant-cake', round, '#deae87'],
-  ['flatbed-wagon', bevel, '#ad9067'],
-  ['toy-block', bevel, '#d9a64d'],
-  ['log', capsule, '#a57356'],
-  ['banked-track', track, '#758a98'],
-  ['bench', capsule, '#ae8666'],
-  ['giant-cookie', round, '#c59755'],
-  ['rail-container', bevel, '#b86e62'],
-  ['pipe', capsule, '#75a4a7'],
-  ['freezer', roof, '#a3bbc2'],
+  ['gear', '#b28d52'],
+  ['delivery-van', '#71b8a5'],
+  ['giant-maki', '#96aa58'],
+  ['workbench', '#ad7851'],
+  ['lumber-wagon', '#a7845e'],
+  ['firetruck', '#c96d66'],
+  ['flat-rock', '#9eafa9'],
+  ['shopping-cart', '#b4c6c8'],
+  ['giant-cake', '#deae87'],
+  ['flatbed-wagon', '#ad9067'],
+  ['toy-block', '#d9a64d'],
+  ['log', '#a57356'],
+  ['banked-track', '#758a98'],
+  ['bench', '#ae8666'],
+  ['giant-cookie', '#c59755'],
+  ['rail-container', '#b86e62'],
+  ['pipe', '#75a4a7'],
+  ['freezer', '#a3bbc2'],
 ];
 
-export const obstacleModels = Object.fromEntries(pieces.map(([name, , colour]) => [name, { colour }]));
+export const obstacleModels = Object.fromEntries(pieces.map(([name, colour]) => [name, { colour }]));
 const traversals = new Set(['floor', 'stair', 'ramp', 'bridge', 'flag']);
-const connections = new Set(['stair', 'ramp', 'bridge']);
 const tallModels = {
   'delivery-van': .32, firetruck: .32, 'rail-container': .28, 'lumber-wagon': .28,
   'shopping-cart': .36, 'toy-block': .31, 'giant-maki': .30, workbench: .24, bench: .22,
@@ -44,6 +35,48 @@ function headroom(platform, lower) {
   return Math.max(platform.thickness, platform.y - sway(platform) - lowerTop - 44);
 }
 
+const bounds = new Map();
+for (const [name, { nativeWidth, nativeDepth, primitives }] of Object.entries(obstacleColliders)) {
+  const turned = primitives.map(({ x, z, w, d, ...vertical }) => ({ x: z, z: 1 - x - w, w: d, d: w, ...vertical }));
+  bounds.set(name, { nativeWidth, nativeDepth, primitives, turned });
+}
+
+function contactHeight(pieces, x, z) {
+  let highest = -1;
+  for (const cell of pieces) {
+    if (x >= cell.x && x <= cell.x + cell.w && z >= cell.z && z <= cell.z + cell.d) highest = Math.max(highest, cell.top);
+  }
+  return highest;
+}
+
+function chooseLanding(platform, pieces, previous, isGear) {
+  let idealX = .5, idealZ = .5;
+  if (isGear) {
+    const dx = (previous.x + previous.w / 2 - platform.x) / platform.w - .5;
+    const dz = (previous.z + previous.d / 2 - platform.z) / platform.d - .5;
+    const distance = Math.hypot(dx, dz) || 1;
+    idealX += .34 * dx / distance;
+    idealZ += .34 * dz / distance;
+  }
+  let bestScore = -Infinity;
+  let chosen = [.5, .5];
+  const dx = 6 / platform.w, dz = 6 / platform.d;
+  for (let row = 2; row <= 14; row++) for (let col = 2; col <= 14; col++) {
+    const x = col / 16, z = row / 16;
+    const height = contactHeight(pieces, x, z);
+    if (height < 0) continue;
+    const neighbours = [contactHeight(pieces, x - dx, z), contactHeight(pieces, x + dx, z),
+      contactHeight(pieces, x, z - dz), contactHeight(pieces, x, z + dz)];
+    const support = neighbours.filter((top) => top >= height - .14).length;
+    const score = height * 2 + support * .17 - Math.hypot(x - idealX, z - idealZ) * (isGear ? 5 : 3);
+    if (score > bestScore) {
+      bestScore = score;
+      chosen = [x, z];
+    }
+  }
+  return chosen;
+}
+
 export function withObstacle(platform, previous, next, levelIndex, order) {
   if (platform.start || traversals.has(platform.kind)) return platform;
   const isFirstJump = levelIndex === 0 && order === 1;
@@ -51,23 +84,22 @@ export function withObstacle(platform, previous, next, levelIndex, order) {
   const span = Math.max(platform.w, platform.d);
   const available = headroom(platform, previous);
   let index = start;
-  while ((tallModels[pieces[index][0]] ?? 0) * span > available) index = (index + 1) % pieces.length;
-  const [model, shape] = pieces[index];
-  const thickness = tallModels[model] ? Math.min(available, Math.max(platform.thickness, span * .43)) : platform.thickness;
-  const joined = connections.has(previous?.kind) || connections.has(next?.kind);
-  const footprint = joined && !isFirstJump ? bevel : shape;
-  const rotatedFootprint = platform.w > platform.d * 1.22 && footprint !== round && !joined
-    ? footprint.map(([x, z]) => [z, -x])
-    : footprint;
-  return { ...platform, thickness, obstacle: model, footprint: rotatedFootprint };
-}
-
-export function containsFootprint(platform, x, z) {
-  if (!platform.footprint) return true;
-  const px = (x - platform.x) / platform.w - .5;
-  const pz = (z - platform.z) / platform.d - .5;
-  return platform.footprint.every(([ax, az], index, points) => {
-    const [bx, bz] = points[(index + 1) % points.length];
-    return (bx - ax) * (pz - az) - (bz - az) * (px - ax) >= 0;
-  });
+  while (true) {
+    const [model] = pieces[index];
+    const { nativeWidth, nativeDepth, primitives, turned } = bounds.get(model);
+    const quarterTurn = (platform.w / platform.d > 1.22 && nativeDepth > nativeWidth * 1.15) ||
+      (platform.d / platform.w > 1.22 && nativeWidth > nativeDepth * 1.15);
+    const colliders = quarterTurn ? turned : primitives;
+    const gear = model === 'gear';
+    const centreBlocked = gear && colliders.some(({ x, z, w, d }) =>
+      x < .5 + 13 / platform.w && x + w > .5 - 13 / platform.w &&
+      z < .5 + 13 / platform.d && z + d > .5 - 13 / platform.d);
+    const minimum = (tallModels[model] ?? 0) * span;
+    if (minimum <= available && !centreBlocked) {
+      const thickness = tallModels[model] ? Math.min(available, Math.max(platform.thickness, span * .43)) : platform.thickness;
+      const landing = chooseLanding(platform, colliders, previous, gear);
+      return { ...platform, obstacle: model, quarterTurn, colliders, thickness, landing };
+    }
+    index = (index + 1) % pieces.length;
+  }
 }

@@ -37,7 +37,7 @@ Level progress and gift settings belong to the browser origin, so the hosted and
 
 ## Visual assets
 
-The local asset pack includes an animated [Tevy hiker](assets/climber/README.md), Poly Haven cliff scans and props, and [18 playable obstacle models from eight Kenney packs](assets/obstacles/README.md). The outlined landing area matches each obstacle’s playable footprint. See the [model credits and licences](assets/README.md), [cliff and steel materials](assets/materials/README.md) and [panorama prompt](assets/skybreak-matte.md).
+The local asset pack includes an animated [Tevy hiker](assets/climber/README.md), Poly Haven cliff scans and props, and [18 playable obstacle models from eight Kenney packs](assets/obstacles/README.md). Jump onto the object itself. The gear wheels have open centres, and the landing marker points to solid ground. See the [model credits and licences](assets/README.md), [cliff and steel materials](assets/materials/README.md) and [panorama prompt](assets/skybreak-matte.md).
 
 ## Run the checks
 
