@@ -179,6 +179,31 @@ test('a direction lock masks one movement input while leaving the alternative an
   assert(game.player.z > before);
 });
 
+function clipsFootprint(solid, left, right, near, far) {
+  let polygon = solid.footprint.map(([x, z]) => [solid.x + (.5 + x) * solid.w, solid.z + (.5 + z) * solid.d]);
+  for (const [axis, boundary, sign] of [[0, left, 1], [0, right, -1], [1, near, 1], [1, far, -1]]) {
+    const clipped = [];
+    let previous = polygon.at(-1);
+    for (const point of polygon) {
+      const distanceBefore = sign * (previous[axis] - boundary);
+      const distanceAfter = sign * (point[axis] - boundary);
+      if ((distanceBefore < 0) !== (distanceAfter < 0)) {
+        const fraction = distanceBefore / (distanceBefore - distanceAfter);
+        clipped.push(previous.map((coordinate, dimension) => coordinate + fraction * (point[dimension] - coordinate)));
+      }
+      if (distanceAfter >= 0) clipped.push(point);
+      previous = point;
+    }
+    polygon = clipped;
+    if (polygon.length < 3) return false;
+  }
+  const twiceArea = polygon.reduce((sum, [x, z], index) => {
+    const [nextX, nextZ] = polygon[(index + 1) % polygon.length];
+    return sum + x * nextZ - z * nextX;
+  }, 0);
+  return Math.abs(twiceArea) > 1e-5;
+}
+
 function overlapsSolid(game, platform) {
   const { player } = game;
   const solid = platformPosition(platform, game.time);
@@ -189,7 +214,8 @@ function overlapsSolid(game, platform) {
   if (right - left <= 1e-5 || far - near <= 1e-5) return false;
   const heights = [platformTop(solid, left, near), platformTop(solid, right, far)];
   return Math.max(...heights) - player.y > 1e-5
-    && player.y + PLAYER_HEIGHT - (Math.min(...heights) - solid.thickness) > 1e-5;
+    && player.y + PLAYER_HEIGHT - (Math.min(...heights) - solid.thickness) > 1e-5
+    && (!solid.footprint || solid.slope || clipsFootprint(solid, left, right, near, far));
 }
 
 test('all 500 recipes run through the solid collision engine without penetration', () => {

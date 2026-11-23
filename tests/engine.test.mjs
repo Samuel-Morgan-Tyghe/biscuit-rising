@@ -213,7 +213,8 @@ test("boosted, levitating, and inverted motion cannot pass through a ledge from 
 test("side contact stops movement through a ledge but allows sliding along it", () => {
   const game = createGame();
   const platform = platforms[1];
-  const wall = platform.x - PLAYER_WIDTH / 2;
+  const edge = Math.min(...platform.footprint.map(([x]) => x));
+  const wall = platform.x + platform.w * (.5 + edge) - PLAYER_WIDTH / 2;
   const z = platform.z + platform.d / 2;
   Object.assign(game.player, { x: wall - 40, y: 45, z, grounded: null, vx: 900 });
   step(game, { right: true, front: true }, 0.1);

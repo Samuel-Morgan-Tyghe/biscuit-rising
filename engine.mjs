@@ -19,9 +19,14 @@ const approach = (value, target, amount) => value + clamp(target - value, -amoun
 const halfWidth = PLAYER_WIDTH / 2;
 const halfDepth = PLAYER_DEPTH / 2;
 
-function overPlatform(player, platform) {
-  return player.x + halfWidth > platform.x && player.x - halfWidth < platform.x + platform.w
-    && player.z + halfDepth > platform.z && player.z - halfDepth < platform.z + platform.d;
+function overPlatform(player, solid) {
+  const x = player.x - solid.end.x + solid.platform.x;
+  const z = player.z - solid.end.z + solid.platform.z;
+  if (x <= solid.min.x || x >= solid.max.x || z <= solid.min.z || z >= solid.max.z) return false;
+  return !solid.sides || solid.sides.every((side) => {
+    const projection = side.x * x + side.z * z;
+    return projection > side.low + epsilon && projection < side.high - epsilon;
+  });
 }
 
 export function platformTop(platform, x, z) {
@@ -185,25 +190,65 @@ const rampAxes = [...axes, "slope"];
 const epsilon = 1e-7;
 const maxStep = 14;
 const noMovement = { x: 0, y: 0, z: 0 };
-const levelSolids = levels.map(({ platforms: route }) => route.map((platform) => {
-  const { x, y, z, w, d, thickness, slope } = platform;
+const levelSolids = new WeakMap();
+
+function footprintSlabs({ x, z, w, d, footprint }) {
+  const points = footprint.map(([dx, dz]) => [x + (.5 + dx) * w, z + (.5 + dz) * d]);
+  // The player box adds its extent along each footprint normal.
+  const sides = [];
+  for (const [index, [ax, az]] of points.entries()) {
+    const [bx, bz] = points[(index + 1) % points.length];
+    if (ax === bx || az === bz) continue;
+    const length = Math.hypot(bz - az, bx - ax);
+    const nx = (bz - az) / length;
+    const nz = (ax - bx) / length;
+    const distances = points.map(([px, pz]) => nx * px + nz * pz);
+    const reach = Math.abs(nx) * halfWidth + Math.abs(nz) * halfDepth;
+    sides.push({ x: nx, z: nz, low: Math.min(...distances) - reach, high: Math.max(...distances) + reach });
+  }
+  return {
+    sides,
+    minX: Math.min(...points.map(([px]) => px)) - halfWidth,
+    maxX: Math.max(...points.map(([px]) => px)) + halfWidth,
+    minZ: Math.min(...points.map(([, pz]) => pz)) - halfDepth,
+    maxZ: Math.max(...points.map(([, pz]) => pz)) + halfDepth,
+  };
+}
+
+function solidPlatform(platform) {
+  const { x, y, z, w, d, thickness, slope, footprint } = platform;
   const gradient = slope && slope.rise / (slope.axis === "x" ? w : d);
   const intercept = slope && platformTop(platform, x, z) - gradient * platform[slope.axis];
   const reach = slope && (slope.axis === "x" ? halfWidth : halfDepth) * Math.abs(gradient);
+  const hull = !slope && footprint?.length >= 3 ? footprintSlabs(platform) : null;
+  const contactAxes = hull?.sides.length ? [...axes, ...hull.sides] : axes;
   return {
     platform,
-    min: { x: x - halfWidth, y: y - thickness - PLAYER_HEIGHT, z: z - halfDepth, slope: intercept - thickness - PLAYER_HEIGHT - reach },
-    max: { x: x + w + halfWidth, y: y + Math.abs(slope?.rise ?? 0), z: z + d + halfDepth, slope: intercept + reach },
+    min: {
+      x: hull?.minX ?? (x - halfWidth),
+      y: y - thickness - PLAYER_HEIGHT,
+      z: hull?.minZ ?? (z - halfDepth),
+      slope: intercept - thickness - PLAYER_HEIGHT - reach,
+    },
+    max: {
+      x: hull?.maxX ?? (x + w + halfWidth),
+      y: y + Math.abs(slope?.rise ?? 0),
+      z: hull?.maxZ ?? (z + d + halfDepth),
+      slope: intercept + reach,
+    },
+    sides: hull?.sides,
+    contactAxes: slope ? rampAxes : contactAxes,
     slope,
     gradient,
     end: platform,
     offset: noMovement,
     delta: noMovement,
   };
-}));
+}
 
-function solidsForStep(levelIndex, from, to) {
-  return levelSolids[levelIndex].map((solid) => {
+function solidsForStep(level, from, to) {
+  if (!levelSolids.has(level)) levelSolids.set(level, level.platforms.map(solidPlatform));
+  return levelSolids.get(level).map((solid) => {
     const { platform } = solid;
     if (platform.kind !== "moving" && platform.kind !== "wobble") return solid;
     const start = platformPosition(platform, from);
@@ -220,13 +265,24 @@ function firstContact(player, motion, solids, elapsed) {
     let entry = -Infinity;
     let exit = Infinity;
     let face;
-    for (const axis of (solid.slope ? rampAxes : axes)) {
+    for (const axis of solid.contactAxes) {
       const tilted = axis === "slope";
-      const shift = tilted ? 0 : solid.offset[axis] + solid.delta[axis] * elapsed;
-      const low = solid.min[axis] + shift;
-      const high = solid.max[axis] + shift;
-      const origin = tilted ? player.y - solid.gradient * player[solid.slope.axis] : player[axis];
-      const relative = tilted ? motion.y - solid.gradient * motion[solid.slope.axis] : motion[axis] - solid.delta[axis] * (1 - elapsed);
+      let low, high, origin, relative;
+      if (typeof axis === "object") {
+        const shift = axis.x * (solid.offset.x + solid.delta.x * elapsed)
+          + axis.z * (solid.offset.z + solid.delta.z * elapsed);
+        low = axis.low + shift;
+        high = axis.high + shift;
+        origin = axis.x * player.x + axis.z * player.z;
+        relative = axis.x * (motion.x - solid.delta.x * (1 - elapsed))
+          + axis.z * (motion.z - solid.delta.z * (1 - elapsed));
+      } else {
+        const shift = tilted ? 0 : solid.offset[axis] + solid.delta[axis] * elapsed;
+        low = solid.min[axis] + shift;
+        high = solid.max[axis] + shift;
+        origin = tilted ? player.y - solid.gradient * player[solid.slope.axis] : player[axis];
+        relative = tilted ? motion.y - solid.gradient * motion[solid.slope.axis] : motion[axis] - solid.delta[axis] * (1 - elapsed);
+      }
       if (Math.abs(relative) < epsilon) {
         if (origin <= low + epsilon || origin >= high - epsilon) {
           entry = Infinity;
@@ -241,6 +297,7 @@ function firstContact(player, motion, solids, elapsed) {
         face = axis;
       }
       exit = Math.min(exit, Math.max(a, b));
+      if (entry > 1 || entry >= exit - epsilon) break;
     }
     if (entry >= -epsilon && entry <= 1 && entry < exit - epsilon && (!hit || entry < hit.time)) {
       hit = { solid, axis: face, time: Math.max(0, entry) };
@@ -271,6 +328,14 @@ function movePlayer(player, motion, solids) {
       height > epsilon && height <= maxStep &&
       !firstContact(player, { ...noMovement, y: height }, solids, elapsed)) {
       player.y += height;
+    } else if (typeof axis === "object") {
+      const { x, z } = axis;
+      const normalMotion = x * (motion.x - solid.delta.x * (1 - elapsed)) + z * (motion.z - solid.delta.z * (1 - elapsed));
+      const normalSpeed = x * player.vx + z * player.vz;
+      motion.x -= x * normalMotion;
+      motion.z -= z * normalMotion;
+      player.vx -= x * normalSpeed;
+      player.vz -= z * normalSpeed;
     } else {
       motion[axis] = solid.delta[axis] * (1 - elapsed);
       player[`v${axis}`] = 0;
@@ -287,7 +352,7 @@ export function step(game, input, dt) {
   if (game.time >= game.noticeUntil) game.notice = "";
 
   for (const effect of Object.keys(effects)) effects[effect] = Math.max(0, effects[effect] - dt);
-  const frameSolids = solidsForStep(level.index, previousTime, game.time);
+  const frameSolids = solidsForStep(level, previousTime, game.time);
   const carrier = player.grounded && frameSolids.find(({ platform }) => platform === player.grounded);
   const carry = carrier?.delta ?? noMovement;
 
@@ -365,7 +430,7 @@ export function step(game, input, dt) {
   let top = -Infinity;
   if (!floating && player.vy <= 0) {
     for (const solid of frameSolids) {
-      if (!overPlatform(player, solid.end)) continue;
+      if (!overPlatform(player, solid)) continue;
       const height = supportHeight(solid.end, player);
       const gap = player.y - height;
       const walkingDown = player.grounded && (carrier.slope || solid.slope ||

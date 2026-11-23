@@ -2,6 +2,7 @@ import * as THREE from './vendor/three.module.min.js';
 import { GLTFLoader } from './vendor/gltf-loader.mjs';
 import { LEVEL_COUNT, PLAYER_HEIGHT, platformTop } from './engine.mjs';
 import { platformDesign } from './platform-design.mjs';
+import { containsFootprint, obstacleModels } from './obstacles.mjs';
 
 const colours = {
   iron: '#233740', rails: '#60787a', bolts: '#d5d7bf', markings: '#f1bb63',
@@ -485,7 +486,55 @@ function constructionBraces(group, platform, design) {
   }
 }
 
+function footprintSolid(platform, depth) {
+  const outline = new THREE.Shape();
+  for (const [index, [x, z]] of platform.footprint.entries()) {
+    const method = index === 0 ? 'moveTo' : 'lineTo';
+    outline[method](x * platform.w, -z * platform.d);
+  }
+  outline.closePath();
+  const geometry = new THREE.ExtrudeGeometry(outline, { depth, bevelEnabled: false, curveSegments: 1 });
+  geometry.rotateX(-Math.PI / 2);
+  geometry.translate(0, -depth, 0);
+  return geometry;
+}
+
+function buildObstacle(platform) {
+  const group = new THREE.Group();
+  const art = platformDesign(platform.designSeed);
+  const colour = new THREE.Color(obstacleModels[platform.obstacle].colour).lerp(new THREE.Color(art.colour), .16);
+  const material = new THREE.MeshStandardMaterial({ color: colour, roughness: .72, side: THREE.DoubleSide });
+  const deck = new THREE.Mesh(footprintSolid(platform, 1.6), material);
+  deck.receiveShadow = true;
+  const fallback = new THREE.Mesh(footprintSolid(platform, platform.thickness - 1.6).translate(0, -1.6, 0), matte(art.colour));
+  fallback.castShadow = fallback.receiveShadow = true;
+  const edgePoints = platform.footprint.map(([x, z]) => new THREE.Vector3(x * platform.w, .24, z * platform.d));
+  const edge = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(edgePoints),
+    new THREE.LineBasicMaterial({ color: '#fff0ca', transparent: true, opacity: .78 }));
+  group.add(fallback, deck, edge);
+  constructionBraces(group, platform, art);
+  return { group, material, colour, fallback };
+}
+
+function fitObstacle(object, platform, asset) {
+  const { w, d, thickness } = platform;
+  const oriented = new THREE.Group();
+  const model = asset.clone(true);
+  oriented.add(model);
+  const size = new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3());
+  if (w / d > 1.22 && size.z > size.x * 1.15 || d / w > 1.22 && size.x > size.z * 1.15) {
+    model.rotation.y += Math.PI / 2;
+  }
+  placeModel(oriented, object.group, [w * .98, thickness - .85, d * .98], [0, -thickness, 0]);
+  object.fallback.visible = false;
+  object.material.transparent = true;
+  object.material.depthWrite = false;
+  object.material.opacity = .24;
+  object.material.needsUpdate = true;
+}
+
 function buildLedge(platform, textures) {
+  if (platform.obstacle) return buildObstacle(platform);
   const group = new THREE.Group();
   const { kind, w, d, start, thickness } = platform;
   const longX = w >= d;
@@ -598,7 +647,7 @@ function airborneClip(idle) {
   return new THREE.AnimationClip('airborne', .62, tracks);
 }
 
-function loadAssets(canvas, scene, player, addKit) {
+function loadAssets(canvas, scene, player, addObstacle) {
   const loader = new GLTFLoader();
   const load = (name, place) => loader.loadAsync(`./assets/${name}.glb`)
     .then(place)
@@ -627,8 +676,6 @@ function loadAssets(canvas, scene, player, addKit) {
     placeModel(model, scene, [160, 352, 112], [555, 1330, 540], -.71);
     placeModel(model, scene, [151, 299, 116], [497, 1987, 680], 2.8);
   });
-  const containers = load('box-large', ({ scene: model }) => addKit(510, model));
-  const catwalks = load('catwalk-straight', ({ scene: model }) => addKit(820, model));
   const cranes = load('models/overhead-crane', ({ scene: model }) => {
     placeModel(model, scene, [270, 80, 90], [449, 123, 460], -.12);
     placeModel(model, scene, [340, 100, 104], [512, 676, 367], .54);
@@ -645,8 +692,12 @@ function loadAssets(canvas, scene, player, addKit) {
       placeModel(model, scene, [19, h, 19], [x, y, z], x * .11);
     }
   });
-  const conveyors = load('conveyor-bars-stripe', ({ scene: model }) => addKit(660, model));
-  Promise.all([climber, rocks, containers, catwalks, cranes, generators, barrels, conveyors]).then((results) => {
+  const models = Object.keys(obstacleModels).map((name) =>
+    load(`obstacles/${name}`, ({ scene: model }) => addObstacle(name, model)));
+  Promise.all(models).then((results) => {
+    canvas.dataset.obstacles = results.includes(false) ? 'partial' : 'loaded';
+  });
+  Promise.all([climber, rocks, cranes, generators, barrels, ...models]).then((results) => {
     canvas.dataset.assets = results.includes(false) ? 'partial' : 'loaded';
   });
 }
@@ -729,7 +780,7 @@ function disposeStage(stage) {
   const reusable = new Set(materials.values());
   const geometry = new Set(), stageMaterials = new Set();
   stage.traverse((mesh) => {
-    if (!mesh.isMesh || mesh.userData.sharedModel) return;
+    if (!(mesh.isMesh || mesh.isLine) || mesh.userData.sharedModel) return;
     if (![cube, sphere, cylinder].includes(mesh.geometry)) geometry.add(mesh.geometry);
     if (reusable.has(mesh.material)) return;
     stageMaterials.add(mesh.material);
@@ -778,24 +829,16 @@ export function createRenderer(canvas, world, follow) {
   const dragon = dragonModel();
   scene.add(player.group, dragon.group);
   const flag = summitFlag(scene, { x: 0, y: 0, z: 0 });
-  const kits = new Map();
+  const props = new Map();
   const sunrise = new THREE.Color('#ffe1b0'), cloudline = new THREE.Color('#e3edff');
   let level, terrain;
   let objects = [];
 
-  function placeKit(height, model) {
-    if (!level || level.index >= 4) return;
-    const index = level.platforms.findIndex((p) => p.visualY === height && p.kind === ({ 510: 'crate', 660: 'moving', 820: 'catwalk' })[height]);
-    if (index < 0) return;
-    const { w, d, thickness } = level.platforms[index];
-    const size = height === 510 ? [w * .94, thickness - 6, d + 2] : [w * .95, 8, d];
-    placeModel(model, objects[index].group, size, [0, height === 510 ? 5 - thickness : -thickness, 0],
-      height === 660 ? Math.PI : 0);
-  }
-
-  loadAssets(canvas, scenery, player, (height, model) => {
-    kits.set(height, model);
-    placeKit(height, model);
+  loadAssets(canvas, scenery, player, (name, model) => {
+    props.set(name, model);
+    level?.platforms.forEach((platform, index) => {
+      if (platform.obstacle === name) fitObstacle(objects[index], platform, model);
+    });
   });
 
   function setLevel(next) {
@@ -813,7 +856,10 @@ export function createRenderer(canvas, world, follow) {
     scene.add(terrain);
     flag.parent.position.set(level.goal.x, level.goal.y, level.goal.z);
     key.color.copy(sunrise).lerp(cloudline, level.index / (LEVEL_COUNT - 1));
-    for (const [height, model] of kits) placeKit(height, model);
+    level.platforms.forEach((platform, index) => {
+      const model = props.get(platform.obstacle);
+      if (model) fitObstacle(objects[index], platform, model);
+    });
   }
   const lane = box(scene, new THREE.MeshBasicMaterial({ color: '#ff8754', transparent: true, opacity: .55, depthWrite: false }), 1, 2, 16);
   const disc = new THREE.CircleGeometry(1, 24);
@@ -871,7 +917,7 @@ export function createRenderer(canvas, world, follow) {
         const { group, material, colour } = objects[index];
         group.position.set(x + w / 2, y, z + d / 2);
         material.color.copy(effects.slippery > 0 ? ice : colour);
-        if (state.x >= x && state.x <= x + w && state.z >= z && state.z <= z + d) {
+        if (state.x >= x && state.x <= x + w && state.z >= z && state.z <= z + d && containsFootprint(at, state.x, state.z)) {
           const top = platformTop(at, state.x, state.z);
           if (state.y + 1 >= top && (support === undefined || top > support.y)) support = { y: top, platform: at };
         }

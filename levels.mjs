@@ -1,3 +1,5 @@
+import { withObstacle } from './obstacles.mjs';
+
 function stairs(axis, start, end, across, width, low, high) {
   const count = 10;
   const tread = (end - start) / count;
@@ -174,7 +176,7 @@ for (let index = 0; index < LEVEL_COUNT; index += 1) {
   const generated = index >= sections.length;
   const goalLedge = ledges.at(-1)[3] === "ramp" ? sections[index + 1].ledges[0] : null;
   const routeLedges = goalLedge ? [...ledges, goalLedge] : ledges;
-  const platforms = routeLedges.map(([centre, visualY, w, use, depthCentre, d, terrain], order) => {
+  const routePlatforms = routeLedges.map(([centre, visualY, w, use, depthCentre, d, terrain], order) => {
     const kind = order === routeLedges.length - 1 ? "flag" : use;
     return {
       x: centre - w / 2,
@@ -187,6 +189,8 @@ for (let index = 0; index < LEVEL_COUNT; index += 1) {
       ...terrain,
     };
   });
+  const platforms = routePlatforms.map((platform, order) =>
+    withObstacle(platform, routePlatforms[order - 1], routePlatforms[order + 1], index, order));
   const point = ({ x, y, z, w, d }) => ({ x: x + w / 2, y, z: z + d / 2 });
   levels.push({ index, name, platforms, spawn: point(platforms[0]), goal: point(platforms.at(-1)), baseY, visualBaseY });
 }
