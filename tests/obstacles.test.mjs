@@ -12,6 +12,9 @@ test('the course uses every bundled obstacle with a convex, non-rectangular land
   for (const platform of platforms) {
     const { footprint, x, z, w, d } = platform;
     assert(footprint.length > 4);
+    if (platform.obstacle === 'firetruck' || platform.obstacle === 'delivery-van') {
+      assert(platform.thickness >= Math.max(w, d) * .32);
+    }
     assert(containsFootprint(platform, x + w / 2, z + d / 2));
     assert(!containsFootprint(platform, x, z));
     for (const [index, [ax, az]] of footprint.entries()) {

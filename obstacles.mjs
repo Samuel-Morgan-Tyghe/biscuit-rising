@@ -32,17 +32,34 @@ const pieces = [
 export const obstacleModels = Object.fromEntries(pieces.map(([name, , colour]) => [name, { colour }]));
 const traversals = new Set(['floor', 'stair', 'ramp', 'bridge', 'flag']);
 const connections = new Set(['stair', 'ramp', 'bridge']);
+const tallModels = {
+  'delivery-van': .32, firetruck: .32, 'rail-container': .28, 'lumber-wagon': .28,
+  'shopping-cart': .36, 'toy-block': .31, 'giant-maki': .30, workbench: .24, bench: .22,
+};
+
+function headroom(platform, lower) {
+  if (!lower) return platform.thickness;
+  const sway = (candidate) => candidate.kind === 'wobble' ? 8 : 0;
+  const lowerTop = lower.y + Math.abs(lower.slope?.rise ?? 0) + sway(lower);
+  return Math.max(platform.thickness, platform.y - sway(platform) - lowerTop - 44);
+}
 
 export function withObstacle(platform, previous, next, levelIndex, order) {
   if (platform.start || traversals.has(platform.kind)) return platform;
   const isFirstJump = levelIndex === 0 && order === 1;
-  const [model, shape] = pieces[isFirstJump ? 0 : (levelIndex * 7 + order * 5) % pieces.length];
+  const start = isFirstJump ? 0 : (levelIndex * 7 + order * 5) % pieces.length;
+  const span = Math.max(platform.w, platform.d);
+  const available = headroom(platform, previous);
+  let index = start;
+  while ((tallModels[pieces[index][0]] ?? 0) * span > available) index = (index + 1) % pieces.length;
+  const [model, shape] = pieces[index];
+  const thickness = tallModels[model] ? Math.min(available, Math.max(platform.thickness, span * .43)) : platform.thickness;
   const joined = connections.has(previous?.kind) || connections.has(next?.kind);
   const footprint = joined && !isFirstJump ? bevel : shape;
   const rotatedFootprint = platform.w > platform.d * 1.22 && footprint !== round && !joined
     ? footprint.map(([x, z]) => [z, -x])
     : footprint;
-  return { ...platform, obstacle: model, footprint: rotatedFootprint };
+  return { ...platform, thickness, obstacle: model, footprint: rotatedFootprint };
 }
 
 export function containsFootprint(platform, x, z) {

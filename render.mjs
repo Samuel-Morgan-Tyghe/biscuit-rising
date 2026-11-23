@@ -628,6 +628,7 @@ function placeModel(source, parent, size, position, heading = 0) {
   fitted.position.set(...position);
   fitted.rotation.y = heading;
   parent.add(fitted);
+  return fitted;
 }
 
 function airborneClip(idle) {
@@ -647,7 +648,7 @@ function airborneClip(idle) {
   return new THREE.AnimationClip('airborne', .62, tracks);
 }
 
-function loadAssets(canvas, scene, player, addObstacle) {
+function loadAssets(canvas, scene, player, addObstacle, placeStageProp) {
   const loader = new GLTFLoader();
   const load = (name, place) => loader.loadAsync(`./assets/${name}.glb`)
     .then(place)
@@ -682,14 +683,13 @@ function loadAssets(canvas, scene, player, addObstacle) {
     placeModel(model, scene, [250, 79, 89], [650, 1288, 428], Math.PI / 2);
   });
   const generators = load('models/generator', ({ scene: model }) => {
-    placeModel(model, scene, [38, 35, 34], [430, 0, 980], -.28);
-    placeModel(model, scene, [34, 31, 29], [495, 220, 488], .72);
-    placeModel(model, scene, [36, 33, 31], [345, 1658, 515], -.38);
+    placeStageProp(0, model, [38, 35, 34], [430, 0, 980], -.28);
+    placeStageProp(3, model, [36, 33, 31], [345, 1658, 515], -.38);
   });
   const barrels = load('models/barrel', ({ scene: model }) => {
-    for (const [x, y, z, h] of [[234, 0, 953, 27], [240, 0, 981, 24], [210, 0, 974, 27],
-      [649, 510, 135, 27], [637, 510, 156, 25], [376, 1054, 744, 29], [391, 1054, 755, 25]]) {
-      placeModel(model, scene, [19, h, 19], [x, y, z], x * .11);
+    for (const [level, x, y, z, h] of [[0, 234, 0, 953, 27], [0, 240, 0, 981, 24], [0, 212, 0, 974, 27],
+      [1, 649, 510, 135, 27], [1, 637, 510, 156, 25], [2, 445, 1054, 740, 29], [2, 464, 1054, 747, 25]]) {
+      placeStageProp(level, model, [19, h, 19], [x, y, z], x * .11);
     }
   });
   const models = Object.keys(obstacleModels).map((name) =>
@@ -830,6 +830,7 @@ export function createRenderer(canvas, world, follow) {
   scene.add(player.group, dragon.group);
   const flag = summitFlag(scene, { x: 0, y: 0, z: 0 });
   const props = new Map();
+  const stageProps = [];
   const sunrise = new THREE.Color('#ffe1b0'), cloudline = new THREE.Color('#e3edff');
   let level, terrain;
   let objects = [];
@@ -839,6 +840,10 @@ export function createRenderer(canvas, world, follow) {
     level?.platforms.forEach((platform, index) => {
       if (platform.obstacle === name) fitObstacle(objects[index], platform, model);
     });
+  }, (index, model, size, position, heading) => {
+    const object = placeModel(model, scenery, size, position, heading);
+    object.visible = index === level?.index;
+    stageProps.push({ index, object });
   });
 
   function setLevel(next) {
@@ -849,6 +854,7 @@ export function createRenderer(canvas, world, follow) {
     terrain = new THREE.Group();
     const offsetY = level.baseY - level.visualBaseY;
     scenery.position.y = offsetY;
+    for (const { index, object } of stageProps) object.visible = index === level.index;
     scenery.updateMatrixWorld(true);
     buildSupports(terrain, level.platforms, offsetY);
     objects = level.platforms.map((platform) => buildLedge(platform, textures));
