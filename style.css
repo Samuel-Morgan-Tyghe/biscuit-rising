@@ -31,7 +31,7 @@ main { padding-bottom: 56px; }
 .scoreboard { display: flex; align-items: start; justify-content: space-between; gap: 10px; }
 .progress, .game-actions { display: flex; gap: 12px; }
 .progress { align-items: center; min-width: 0; }
-.game-actions { align-items: start; }
+.game-actions { align-items: start; flex-wrap: wrap; }
 .level-picker { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .level-picker small { white-space: nowrap; }
 .level-picker select { min-width: 0; width: clamp(130px, 18vw, 230px); color: var(--paper); background: #263445; border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font-size: .82rem; }
@@ -47,9 +47,10 @@ canvas:focus-visible { outline-offset: -3px; }
 .controls button, .quiet, .test { border: 1px solid var(--line); background: #263445; color: var(--paper); padding: 6px 10px; border-radius: 6px; font-size: .82rem; font-weight: 700; }
 .controls button { min-width: 42px; min-height: 36px; touch-action: none; }
 .controls button:active, .controls button[data-held="true"] { color: var(--ink); background: var(--accent); }
-#view-toggle[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+#view-toggle[aria-pressed="true"], #random-gifts-toggle[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 #view-toggle:disabled { opacity: .85; cursor: default; }
-#sound-toggle[aria-pressed="false"] { color: var(--muted); }
+#sound-toggle[aria-pressed="false"], #random-gifts-state { color: var(--muted); }
+#random-gifts-toggle[aria-pressed="true"] #random-gifts-state { color: inherit; }
 .direction-pad { display: flex; gap: 5px; }
 .keyboard-help { display: flex; align-items: center; justify-content: center; gap: 7px; color: var(--muted); font-size: .8rem; }
 .keyboard-help span { margin-right: 9px; }

@@ -124,10 +124,25 @@ test("every level increases the tallest required jump from solid ground", () => 
   assert(levels[4].platforms[0].movementRate < levels.at(-1).platforms[0].movementRate);
 });
 
-test("generated jump slabs leave standing room throughout both wobble cycles", () => {
+test("the summit sustains thirteen narrow jumps across faster moving ledges", () => {
+  const [previous, summit] = levels.slice(-2);
+  const jumps = summit.platforms.slice(1);
+  assert.equal(jumps.length, 13);
+  assert(summit.goal.y - summit.baseY > 2 * (previous.goal.y - previous.baseY));
+  assert(jumps.slice(0, -1).every(({ w, d }) => Math.min(w, d) <= 64));
+  assert(jumps.every(({ kind, y }, index) =>
+    !["ramp", "stair", "bridge"].includes(kind) && y > summit.platforms[index].y));
+
+  const moving = jumps.filter(({ kind }) => kind === "moving");
+  assert.equal(moving.length, 4);
+  assert(moving.every(({ movementRate }) => movementRate > 1.5));
+});
+
+test("jump slabs leave standing room throughout both wobble cycles", () => {
   for (const level of levels.slice(4)) {
     const firstCrossing = level.platforms.findIndex(({ kind }) => ["bridge", "ramp", "stair"].includes(kind));
-    for (let index = 1; index < firstCrossing; index += 1) {
+    const end = firstCrossing === -1 ? level.platforms.length : firstCrossing;
+    for (let index = 1; index < end; index += 1) {
       const lower = level.platforms[index - 1];
       const upper = level.platforms[index];
       const highestFloor = lower.y + (lower.kind === "wobble" ? 8 : 0);

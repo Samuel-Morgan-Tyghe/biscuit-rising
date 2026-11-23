@@ -4,6 +4,7 @@ import { GIFT_EFFECT_NAMES, GIFT_SLOTS, giftInteractionsForLevel, giftMappingsFo
 import { createRenderer } from './render.mjs';
 import { createFollowCamera } from './camera.mjs';
 import { createGiftAudio } from './audio.mjs';
+import { createRandomGifts } from './random-gifts.mjs';
 
 const effects = {
   dragon: { name: 'Dragon swoop', icon: '◈', colour: '#fea78a' },
@@ -30,8 +31,12 @@ const audio = createGiftAudio();
 const progressKey = 'skybreak-level';
 const viewKey = 'skybreak-view';
 const muteKey = 'skybreak-muted';
+const randomGiftKey = 'skybreak-random-gifts';
 const viewToggle = $('view-toggle');
 const soundToggle = $('sound-toggle');
+const randomGiftToggle = $('random-gifts-toggle');
+const randomGifts = createRandomGifts(GIFT_SLOTS);
+let randomGiftsEnabled = false;
 let savedLevel = 0;
 let viewPreference = 'third';
 try {
@@ -39,10 +44,12 @@ try {
   if (Number.isInteger(index) && index >= 0 && index < LEVEL_COUNT) savedLevel = index;
   if (localStorage.getItem(viewKey) === 'first') viewPreference = 'first';
   audio.setMuted(localStorage.getItem(muteKey) === 'true');
+  randomGiftsEnabled = localStorage.getItem(randomGiftKey) === 'true';
 } catch {
   // Play remains available when browser storage is blocked.
 }
 let game = createGame(savedLevel);
+setRandomGifts(randomGiftsEnabled);
 syncView();
 if (game.level.index === 0) follow.reset(game);
 else alignRoute();
@@ -71,6 +78,21 @@ soundToggle.addEventListener('click', () => {
     localStorage.setItem(muteKey, String(audio.muted));
   } catch {
     // Sound can still be toggled when storage is blocked.
+  }
+  canvas.focus({ preventScroll: true });
+});
+function setRandomGifts(enabled) {
+  randomGiftsEnabled = enabled;
+  randomGifts.setEnabled(enabled, game.time);
+  randomGiftToggle.setAttribute('aria-pressed', String(enabled));
+  setText($('random-gifts-state'), enabled ? 'On' : 'Off');
+}
+randomGiftToggle.addEventListener('click', () => {
+  setRandomGifts(!randomGiftsEnabled);
+  try {
+    localStorage.setItem(randomGiftKey, String(randomGiftsEnabled));
+  } catch {
+    // Random gifts can still be toggled when storage is blocked.
   }
   canvas.focus({ preventScroll: true });
 });
@@ -129,11 +151,11 @@ const connection = createTikFinity({
   onGift: applyInteraction,
 });
 
-function applyInteraction({ effect, giftName, count = 1, simulated }) {
+function applyInteraction({ effect, giftName, count = 1, simulated, automatic }) {
   const interaction = interactions[effect];
   if (!interaction) return;
   const applied = !game.levelComplete && triggerGiftInteraction(game, interaction.recipe);
-  const source = simulated ? 'Test' : count > 1 ? `${giftName} ×${count}` : giftName;
+  const source = automatic ? 'Random gift' : simulated ? 'Test' : count > 1 ? `${giftName} ×${count}` : giftName;
   $('last-gift').textContent = applied
     ? `${source} triggered ${interaction.name}.`
     : `${interaction.name} is unavailable right now.`;
@@ -301,6 +323,7 @@ function updateLevelView() {
 
 function enterLevel(focusGame = true) {
   audio.stop();
+  randomGifts.reset(game.time);
   try {
     localStorage.setItem(progressKey, String(game.level.index));
   } catch {
@@ -444,6 +467,9 @@ function frame(now) {
     jumpQueued = false;
     remaining -= 1 / 120;
   }
+
+  const randomEffect = randomGifts.next(game.time, game.levelComplete);
+  if (randomEffect) applyInteraction({ effect: randomEffect, automatic: true });
 
   const viewNotice = syncView();
   audio.update(game);

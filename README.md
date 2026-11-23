@@ -11,6 +11,7 @@ Skybreak is a solo third-person 3D climb through **50 levels** above the clouds.
 - Use **Jump to level** above the game to start any of the 50 levels. Your current level saves in this browser, and **Restart level** takes you back to its entrance.
 - Choose **First person** above the game to switch to the climber’s view. Skybreak remembers your choice in this browser.
 - Open the **Gift catalogue** and search by name, mechanic or level. Choose **Jump and test** to load that level and try the interaction for free. There are 500 standalone interactions across the climb, with ten per level.
+- Turn on **Random gifts** in the game toolbar to trigger a random effect from the current level every 20–35 seconds. The switch starts off and saves your choice in this browser. Manual tests and TikFinity gifts work in either setting.
 - A **Perspective lock** gift switches your view and temporarily locks the camera toggle. When it expires, the game restores your chosen view.
 - A **Control lock** temporarily disables one movement direction. You can still turn the camera and move using the other controls.
 - **Phantom dragon** plays a creature warning, and **Mute game** temporarily silences game audio. Use **Sound** in the game toolbar for your own audio preference. These controls affect Skybreak’s audio.

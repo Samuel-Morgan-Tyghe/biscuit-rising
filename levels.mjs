@@ -161,14 +161,33 @@ function route(index) {
   ledges.push([mirror(approach), y, 74, "deck", z, 96]);
   const summit = approach + Math.round(107 + 7 * difficulty);
   ledges.push([mirror(summit), y + 98 + stage * .57, 102 - Math.round(24 * difficulty), "flag", z, 112]);
-  const name = index === LEVEL_COUNT - 1 ? "The summit"
-    : `${places[Math.floor(stage / crossings.length)]} ${crossings[stage % crossings.length]}`;
+  const name = `${places[Math.floor(stage / crossings.length)]} ${crossings[stage % crossings.length]}`;
   return { name, ledges: ledges.map(orient) };
 }
 
+const summitRoute = {
+  name: "The summit",
+  ledges: [
+    [215, 1658, 148, "floor", 860, 116],
+    [358, 1747, 64, "deck", 875, 70],
+    [486, 1841, 58, "moving", 928, 62, { movementRate: 1.65 }],
+    [628, 1945, 60, "wobble", 889, 60, { movementRate: 1.42 }],
+    [762, 2034, 56, "wire", 949, 62],
+    [898, 2140, 64, "moving", 914, 58, { movementRate: 1.78 }],
+    [956, 2232, 50, "deck", 1015, 58],
+    [813, 2336, 56, "wobble", 1000, 54, { movementRate: 1.62 }],
+    [680, 2424, 58, "moving", 957, 62, { movementRate: 1.86 }],
+    [536, 2532, 54, "wire", 1007, 54],
+    [391, 2626, 57, "moving", 977, 62, { movementRate: 1.91 }],
+    [255, 2732, 52, "wobble", 924, 54, { movementRate: 1.78 }],
+    [123, 2840, 57, "wire", 970, 53],
+    [220, 2966, 72, "flag", 890, 72],
+  ],
+};
+
 export const levels = [];
 for (let index = 0; index < LEVEL_COUNT; index += 1) {
-  const { name, ledges } = sections[index] ?? route(index);
+  const { name, ledges } = index === LEVEL_COUNT - 1 ? summitRoute : sections[index] ?? route(index);
   const previous = levels.at(-1);
   const baseY = previous ? previous.goal.y + 68 : 0;
   const visualBaseY = ledges[0][1];
