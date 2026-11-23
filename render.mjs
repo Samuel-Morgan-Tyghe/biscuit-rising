@@ -12,6 +12,7 @@ const cube = new THREE.BoxGeometry(1, 1, 1);
 const sphere = new THREE.SphereGeometry(1, 14, 10);
 const cylinder = new THREE.CylinderGeometry(1, 1, 1, 10);
 const materials = new Map();
+const openObstacles = new Set(['gear', 'banked-track', 'shopping-cart']);
 
 function matte(colour) {
   if (!materials.has(colour)) materials.set(colour, new THREE.MeshStandardMaterial({ color: colour, roughness: .85 }));
@@ -138,6 +139,7 @@ function buildSupports(scene, platforms, offsetY) {
   const flights = new Set();
   for (const platform of platforms) {
     const { x, y, z, w, d, thickness, kind, stairway } = platform;
+    if (openObstacles.has(platform.obstacle)) continue;
     if (kind === 'stair' && flights.has(stairway)) continue;
     if (kind === 'stair') flights.add(stairway);
     const cx = x + w / 2, cz = z + d / 2;
