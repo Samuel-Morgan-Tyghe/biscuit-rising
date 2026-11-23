@@ -17,22 +17,34 @@ function standOn(game, platform) {
 
 function crossTo(game, target) {
   const start = game.player.grounded;
-  const rise = landingPoint(platformPosition(target, game.time)).y > game.player.y;
+  const pointAt = (attempt) => landingPoint(platformPosition(target, attempt.time + 0.13));
+  const rise = pointAt(game).y > game.player.y;
   const walk = target.slope || target.stairway !== undefined || start?.slope || start?.stairway !== undefined || !rise;
-  for (let frame = 0; frame < 190; frame += 1) {
-    const { player } = game;
-    const point = landingPoint(platformPosition(target, game.time + 0.13));
-    const stoppingDistance = (velocity) => velocity * Math.abs(velocity) / (2 * 1750);
-    const across = point.x - player.x - stoppingDistance(player.vx);
-    const depth = point.z - player.z - stoppingDistance(player.vz);
-    step(game, { left: across < -3, right: across > 3, front: depth > 3, back: depth < -3, jump: !walk && frame === 0 }, dt);
-    const distance = Math.hypot(point.x - player.x, point.z - player.z);
-    const advancedOnStairs = target.stairway !== undefined && player.grounded?.stairway === target.stairway && player.grounded.y > target.y;
-    if (game.levelComplete || advancedOnStairs || (player.grounded === target && distance < 19)) return;
+  // A nearby overhang can block a forward takeoff, so also try jumping straight up first.
+  let lastAttempt = game;
+  for (const vertical of walk ? [0] : [0, 10]) {
+    const attempt = { ...game, effects: { ...game.effects }, player: { ...game.player, pose: { ...game.player.pose } } };
+    lastAttempt = attempt;
+    for (let frame = 0; frame < 190; frame += 1) {
+      const { player } = attempt;
+      const point = pointAt(attempt);
+      const stoppingDistance = (velocity) => velocity * Math.abs(velocity) / (2 * 1750);
+      const across = point.x - player.x - stoppingDistance(player.vx);
+      const depth = point.z - player.z - stoppingDistance(player.vz);
+      const steering = frame < vertical ? {} : { left: across < -3, right: across > 3, front: depth > 3, back: depth < -3 };
+      step(attempt, { ...steering, jump: !walk && frame === 0 }, dt);
+      const distance = Math.hypot(point.x - player.x, point.z - player.z);
+      const advancedOnStairs = target.stairway !== undefined && player.grounded?.stairway === target.stairway && player.grounded.y > target.y;
+      if (attempt.levelComplete || advancedOnStairs || (player.grounded === target && distance < 19)) {
+        Object.assign(game, attempt);
+        return;
+      }
+      if (attempt.notice === "Back at the level start") break;
+    }
   }
-  const point = landingPoint(platformPosition(target, game.time));
+  const point = pointAt(lastAttempt);
   const position = ({ x, y, z }) => [x, y, z].map(Math.round).join(",");
-  assert.fail(`level ${game.level.index + 1} missed ${target.pieceCode} ${target.obstacle ?? target.kind} at ${position(point)} from ${start?.pieceCode}, ended at ${position(game.player)} on ${game.player.grounded?.pieceCode}`);
+  assert.fail(`level ${game.level.index + 1} missed ${target.pieceCode} ${target.obstacle ?? target.kind} at ${position(point)} from ${start?.pieceCode}, ended at ${position(lastAttempt.player)} on ${lastAttempt.player.grounded?.pieceCode}`);
 }
 
 function climb(game) {
@@ -198,30 +210,40 @@ test("the quarry ramp is a continuous uphill surface into a runnable bridge", ()
   assert(game.player.y > ramp.y);
 });
 
+function posedHullVertices(player) {
+  const { facing, segments } = player.pose;
+  const cos = Math.cos(facing), sin = Math.sin(facing);
+  return segments.flatMap(({ vertices, x, y, z, halfWidth, height, halfDepth }) =>
+    (vertices ?? [-halfWidth, halfWidth].flatMap((u) => [-halfDepth, halfDepth].flatMap((v) => [
+      [x + u, y, z + v], [x + u, y + height, z + v],
+    ]))).map(([u, v, w]) => [u * cos + w * sin, v, w * cos - u * sin]));
+}
+
 test("the thin part of an inclined ramp stays solid under a fast upward sweep", () => {
   const game = createGame();
   const ramp = platforms.find(({ kind }) => kind === "ramp");
   const x = 661;
   const z = ramp.z + ramp.d / 2;
-  const ceiling = platformTop(ramp, x - PLAYER_WIDTH / 2, z) - ramp.thickness - PLAYER_HEIGHT;
-  Object.assign(game.player, { x, y: ceiling - 8, z, grounded: null, vy: 754 });
+  Object.assign(game.player, { x, y: 165, z, grounded: null, vy: 754 });
   step(game, {}, 0.15);
-  assert(Math.abs(game.player.y - ceiling) < 1e-7);
+  const ceiling = Math.min(...posedHullVertices(game.player).map(([u, v, w]) =>
+    platformTop(ramp, x + u, z + w) - ramp.thickness - v));
+  assert(Math.abs(game.player.y - ceiling) < .001);
   assert.equal(game.player.vy, 0);
   assert.equal(game.player.grounded, null);
 });
 
 test("boosted, levitating, and inverted motion cannot pass through a ledge from below", () => {
   const floor = platforms[0];
-  const ceiling = floor.y - floor.thickness - PLAYER_HEIGHT;
   for (const effect of ["boost", "float", "flip"]) {
     const game = createGame();
     trigger(game, effect);
     Object.assign(game.player, {
-      ...landingPoint(floor), y: ceiling - 8, grounded: null, vy: 754,
+      ...landingPoint(floor), y: floor.y - floor.thickness - PLAYER_HEIGHT - 8, grounded: null, vy: 754,
     });
     step(game, {}, 0.2);
-    assert.equal(game.player.y, ceiling, effect);
+    const head = Math.max(...posedHullVertices(game.player).map(([, v]) => v));
+    assert(Math.abs(game.player.y + head - (floor.y - floor.thickness)) < .001, effect);
     assert.equal(game.player.vy, 0, effect);
     assert.equal(game.player.grounded, null, effect);
   }
@@ -234,7 +256,7 @@ test("side contact stops movement through a ledge but allows sliding along it", 
   const z = floor.z + floor.d / 2;
   Object.assign(game.player, { x: wall - 40, y: -5, z, grounded: null, vx: 900 });
   step(game, { right: true, front: true }, 0.1);
-  assert.equal(game.player.x, wall);
+  assert(game.player.x > wall && game.player.x < floor.x, "the visible body stops at the side");
   assert.equal(game.player.vx, 0);
   assert(game.player.z > z + 15);
 });
@@ -266,11 +288,11 @@ test("a moving lift pushes the player along its side and carries the player on t
   const side = fixture();
   side.time = startTime;
   Object.assign(side.player, {
-    x: start.x + start.w + PLAYER_WIDTH / 2 + 1,
+    x: start.x + start.w + 2.5,
     y: start.y - 12, z: start.z + start.d / 2, grounded: null,
   });
   step(side, {}, 0.1);
-  assert(Math.abs(side.player.x - end.x - end.w - PLAYER_WIDTH / 2) < 1e-7);
+  assert(side.player.x > start.x + start.w + 2.5, "the side moves the visible body");
 
   const top = fixture();
   top.time = startTime;

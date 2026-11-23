@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
-import { createGame, LEVEL_COUNT, platformPosition, platformTop, PLAYER_DEPTH, PLAYER_HEIGHT, PLAYER_WIDTH, step, triggerGiftInteraction } from '../engine.mjs';
+import { createGame, LEVEL_COUNT, platformPosition, platformTop, PLAYER_DEPTH, PLAYER_HEIGHT, PLAYER_WIDTH, step, terrainCollisionShape, triggerGiftInteraction } from '../engine.mjs';
 import { buildMeshCollider, meshIntersectsBody } from '../mesh-collision.mjs';
 import { GIFT_SLOTS, giftInteractionsForLevel, giftMappingsForLevel } from '../level-gifts.mjs';
 import { createTikFinity, DEFAULT_GIFTS } from '../tikfinity.mjs';
@@ -208,18 +208,18 @@ function clipsFootprint(solid, left, right, near, far) {
 const meshFixtures = new WeakMap();
 
 function overlapsSolid(game, platform) {
-  const parent = platformPosition(platform, game.time);
-  if (!platform.mesh) return overlapsPiece(game.player, parent);
+  const parent = terrainCollisionShape(platformPosition(platform, game.time));
+  if (!parent.mesh) return overlapsPiece(game.player, parent);
   if (!meshFixtures.has(platform)) {
     meshFixtures.set(platform, buildMeshCollider(
-      { ...platform, x: 0, y: 0, z: 0 },
+      { ...parent, x: 0, y: 0, z: 0 },
       [PLAYER_WIDTH / 2, PLAYER_HEIGHT, PLAYER_DEPTH / 2],
     ));
   }
   const { player } = game;
   return meshIntersectsBody(meshFixtures.get(platform), {
     x: player.x - parent.x, y: player.y - parent.y, z: player.z - parent.z,
-  });
+  }, .04, player.pose.boots);
 }
 
 function overlapsPiece(player, solid) {

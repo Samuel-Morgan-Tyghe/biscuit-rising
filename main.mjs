@@ -310,7 +310,6 @@ function enterLevel(focusGame = true) {
   if (game.level.index === 0) follow.reset(game);
   else alignRoute();
   renderer?.setLevel?.(game.level);
-  renderer?.reset?.();
   clearInputs();
   $('finish').hidden = true;
   setText($('last-gift'), 'Waiting for a gift or test.');

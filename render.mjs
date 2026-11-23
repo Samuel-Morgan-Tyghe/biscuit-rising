@@ -3,6 +3,7 @@ import { GLTFLoader } from './vendor/gltf-loader.mjs';
 import { LEVEL_COUNT, PLAYER_HEIGHT, landingPoint, platformSurface, platformTop } from './engine.mjs';
 import { platformDesign } from './platform-design.mjs';
 import { obstacleModels } from './obstacles.mjs';
+import { createClimberPose, fitClimber } from './climber-poses.mjs';
 
 const colours = {
   iron: '#233740', rails: '#60787a', bolts: '#d5d7bf', markings: '#f1bb63',
@@ -626,43 +627,16 @@ function placeModel(source, parent, size, position, heading = 0, precise = false
   return fitted;
 }
 
-function airborneClip(idle) {
-  const folds = {
-    thigh_L: .49, thigh_R: .30, calf_L: -.64, calf_R: -.45,
-    upperarm_L: .34, upperarm_R: .21, spine: .12,
-  };
-  const axis = new THREE.Vector3(1, 0, 0);
-  const tracks = idle.tracks.map((track) => {
-    const values = Array.from(track.values.slice(0, track.getValueSize()));
-    const angle = folds[track.name.split('.')[0]];
-    if (!angle || !track.name.endsWith('.quaternion')) return new track.constructor(track.name, [0, .62], [...values, ...values]);
-    const standing = new THREE.Quaternion().fromArray(values);
-    const bent = (amount) => standing.clone().multiply(new THREE.Quaternion().setFromAxisAngle(axis, angle * amount)).toArray();
-    return new track.constructor(track.name, [0, .17, .62], [...bent(.45), ...bent(1), ...bent(.72)]);
-  });
-  return new THREE.AnimationClip('airborne', .62, tracks);
-}
-
 function loadAssets(canvas, scene, player, addObstacle, placeStageProp) {
   const loader = new GLTFLoader();
   const load = (name, place) => loader.loadAsync(`./assets/${name}.glb`)
     .then(place)
     .catch((error) => { console.warn(`Could not load ${name}`, error); return false; });
   const climber = load('climber/hiker', ({ scene: model, animations }) => {
-    const { min, max } = new THREE.Box3().setFromObject(model);
-    const scale = PLAYER_HEIGHT / (max.y - min.y);
-    model.scale.setScalar(scale);
-    model.position.set(-(min.x + max.x) * scale / 2, -min.y * scale, -(min.z + max.z) * scale / 2);
+    fitClimber(model, PLAYER_HEIGHT);
     model.traverse((node) => { if (node.isMesh) node.castShadow = node.receiveShadow = true; });
     player.body.add(model);
-    player.mixer = new THREE.AnimationMixer(model);
-    const idle = animations.find(({ name }) => name === 'idle');
-    const clips = [...animations, airborneClip(idle)];
-    player.clips = Object.fromEntries(clips.map((clip) => [clip.name, player.mixer.clipAction(clip)]));
-    for (const clip of ['airborne', 'wave']) {
-      player.clips[clip].setLoop(THREE.LoopOnce, 1);
-      player.clips[clip].clampWhenFinished = true;
-    }
+    player.applyPose = createClimberPose(model, animations).apply;
     canvas.dataset.climber = 'hiker';
   });
   const rocks = load('models/mountainside', ({ scene: model }) => {
@@ -695,19 +669,6 @@ function loadAssets(canvas, scene, player, addObstacle, placeStageProp) {
   Promise.all([climber, rocks, cranes, generators, barrels, ...models]).then((results) => {
     canvas.dataset.assets = results.includes(false) ? 'partial' : 'loaded';
   });
-}
-
-function animatePlayer(player, state, speed, dt, won) {
-  if (!player.mixer) return;
-  const clip = won ? 'wave' : !state.grounded ? 'airborne' : speed > 14 ? 'walk' : 'idle';
-  const next = player.clips[clip];
-  if (player.action !== next) {
-    player.action?.fadeOut(.13);
-    next.reset().fadeIn(.13).play();
-    player.action = next;
-  }
-  if (clip === 'walk') next.setEffectiveTimeScale(THREE.MathUtils.clamp(speed / 146, .55, 2.25));
-  player.mixer.update(dt);
 }
 
 function dragonModel() {
@@ -846,7 +807,6 @@ export function createRenderer(canvas, world, follow) {
     if (level === next) return;
     if (terrain) disposeStage(terrain);
     level = next;
-    player.body.rotation.y = follow.yaw + Math.PI;
     terrain = new THREE.Group();
     const offsetY = level.baseY - level.visualBaseY;
     scenery.position.y = offsetY;
@@ -877,7 +837,6 @@ export function createRenderer(canvas, world, follow) {
   landing.add(ring, arrow);
   scene.add(landing);
   const ice = new THREE.Color(colours.ice);
-  const facing = new THREE.Quaternion();
   const sight = new THREE.Raycaster();
   const eye = new THREE.Vector3(), chase = new THREE.Vector3();
   const lightingOffset = new THREE.Vector3(-335, 520, 322);
@@ -890,9 +849,6 @@ export function createRenderer(canvas, world, follow) {
       follow.resize(clientWidth / clientHeight);
       renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
       renderer.setSize(clientWidth, clientHeight, false);
-    },
-    reset() {
-      player.body.rotation.y = follow.yaw + Math.PI;
     },
     draw(game, dt, reducedMotion) {
       setLevel(game.level);
@@ -952,12 +908,10 @@ export function createRenderer(canvas, world, follow) {
       }
 
       player.group.position.set(state.x, state.y, state.z);
-      const speed = Math.hypot(state.vx, state.vz);
-      if (speed > 22) {
-        facing.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, Math.atan2(state.vx, state.vz));
-        player.body.quaternion.slerp(facing, 1 - Math.exp(-dt * 14));
-      }
-      animatePlayer(player, state, speed, dt, game.won);
+      const pose = state.pose;
+      player.body.rotation.y = pose?.facing ?? Math.PI;
+      player.body.position.y = pose?.lift ?? 0;
+      player.applyPose?.(pose?.clip ?? 'idle', pose?.time ?? 0);
       player.halo.visible = Boolean(effects.float || effects.boost || effects.bounce);
       player.halo.position.y = effects.float ? 12 + Math.sin(time * 5) * 7 : 4;
       player.halo.material.color.set(effects.float ? '#e2bcff' : effects.boost ? '#b2ffcd' : '#ffca7d');

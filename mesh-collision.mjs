@@ -60,6 +60,7 @@ export function buildMeshCollider(platform, [halfWidth, height, halfDepth]) {
   return {
     x, bottom: y - thickness, z, w, h: thickness, d, quarterTurn,
     tree: sourceIndex(mesh),
+    shapes: new WeakMap(),
     extent: quarterTurn ? [halfDepth / d, height / thickness, halfWidth / w] :
       [halfWidth / w, height / thickness, halfDepth / d],
   };
@@ -85,6 +86,85 @@ function worldNormal(mesh, normal, sign) {
   const z = sign * (mesh.quarterTurn ? -normal[0] : normal[2]) / mesh.d;
   const length = Math.hypot(x, y, z);
   return { x: x / length, y: y / length, z: z / length };
+}
+
+function localNormal(mesh, [x, y, z]) {
+  const u = x * mesh.w, v = y * mesh.h, t = z * mesh.d;
+  return mesh.quarterTurn ? [-t, v, u] : [u, v, t];
+}
+
+function unit(axis) {
+  const length = Math.hypot(...axis);
+  return length <= EPSILON * EPSILON ? null : axis.map((coordinate) => coordinate / length);
+}
+
+function parallel(a, b) {
+  return Math.abs(dot(a, b)) >= 1 - 4 * Number.EPSILON;
+}
+
+function uniqueUnits(source) {
+  const axes = [];
+  for (const candidate of source) {
+    const axis = unit(candidate);
+    if (axis && !axes.some((existing) => parallel(axis, existing))) axes.push(axis);
+  }
+  return axes;
+}
+
+function project(axis, vertices) {
+  let low = Infinity, high = -Infinity;
+  for (const vertex of vertices) {
+    const value = dot(axis, vertex);
+    low = Math.min(low, value);
+    high = Math.max(high, value);
+  }
+  return { axis, low, high };
+}
+
+function prism({ halfWidth, halfDepth, height, footprint }) {
+  const contour = footprint ?? [[-halfWidth, -halfDepth], [halfWidth, -halfDepth],
+    [halfWidth, halfDepth], [-halfWidth, halfDepth]];
+  const sides = contour.map(([x, z], index) => {
+    const [endX, endZ] = contour[(index + 1) % contour.length];
+    return [endX - x, 0, endZ - z];
+  });
+  return {
+    vertices: contour.flatMap(([x, z]) => [[x, 0, z], [x, height, z]]),
+    normals: [[0, 1, 0], ...sides.map(([x, , z]) => [z, 0, -x])],
+    edges: [[0, 1, 0], ...sides],
+  };
+}
+
+function compileSegment(mesh, segment) {
+  const { yaw = 0, x = 0, y = 0, z = 0 } = segment;
+  const cached = mesh.shapes.get(segment);
+  if (cached && cached.yaw === yaw && cached.x === x && cached.y === y && cached.z === z) return cached.shape;
+
+  const source = segment.vertices ? segment : prism(segment);
+  const cos = Math.cos(yaw), sin = Math.sin(yaw);
+  const rotate = ([u, v, t]) => [u * cos + t * sin, v, t * cos - u * sin];
+  const vertices = source.vertices.map((vertex) => {
+    const [u, v, t] = rotate([vertex[0] + x, vertex[1] + y, vertex[2] + z]);
+    return toLocalMotion(mesh, { x: u, y: v, z: t });
+  });
+  const normals = uniqueUnits(source.normals.map((normal) => localNormal(mesh, rotate(normal))));
+  const edges = uniqueUnits(source.edges.map((edge) => {
+    const [u, v, t] = rotate(edge);
+    return toLocalMotion(mesh, { x: u, y: v, z: t });
+  }));
+  const projected = AXES.map((axis) => project(axis, vertices));
+  const shape = {
+    segment, vertices, normals, edges,
+    faces: normals.map((axis) => ({
+      ...project(axis, vertices),
+      units: mesh.quarterTurn ? Math.hypot(axis[2] / mesh.w, axis[1] / mesh.h, axis[0] / mesh.d) :
+        Math.hypot(axis[0] / mesh.w, axis[1] / mesh.h, axis[2] / mesh.d),
+    })),
+    min: projected.map(({ low }) => low),
+    max: projected.map(({ high }) => high),
+  };
+  mesh.shapes.set(segment, { yaw, x, y, z, shape });
+  return shape;
 }
 
 function visit(node, min, max, check) {
@@ -155,32 +235,107 @@ function triangleContact(triangle, start, change, extent, limit) {
   return entry < -EPSILON || !normal ? null : { time: Math.max(0, entry), normal, direction };
 }
 
-function cast(mesh, point, motion, limit, upwardOnly) {
+function convexContact(triangle, start, change, shape, limit) {
+  let entry = -Infinity;
+  let exit = Infinity;
+  let normal;
+  let direction;
+  const clip = ({ axis, low, high }) => {
+    const support = project(axis, triangle.vertices);
+    const min = support.low - high;
+    const max = support.high - low;
+    const origin = dot(start, axis);
+    const delta = dot(change, axis);
+    if (Math.abs(delta) <= EPSILON) return origin > min + EPSILON && origin < max - EPSILON;
+    const near = ((delta > 0 ? min : max) - origin) / delta;
+    const far = ((delta > 0 ? max : min) - origin) / delta;
+    if (near > entry) {
+      entry = near;
+      normal = axis;
+      direction = delta > 0 ? -1 : 1;
+    }
+    exit = Math.min(exit, far);
+    return entry <= limit && entry < exit - EPSILON;
+  };
+
+  if (!triangle.face) {
+    const [a, b, c] = triangle.vertices;
+    triangle.face = unit(triangle.normal);
+    triangle.edges = uniqueUnits([difference(b, a), difference(c, b), difference(a, c)]);
+  }
+  const { face, edges } = triangle;
+  if (!clip(project(face, shape.vertices))) return null;
+  if (!shape.faces.every(clip)) return null;
+  // Unlike an axis-aligned box, a rotated/skinned convex has its own edge directions.
+  const tested = [...shape.normals, face];
+  for (const triangleEdge of edges) {
+    for (const bodyEdge of shape.edges) {
+      const axis = unit(cross(triangleEdge, bodyEdge));
+      if (!axis || tested.some((existing) => parallel(axis, existing))) continue;
+      if (!clip(project(axis, shape.vertices))) return null;
+      tested.push(axis);
+    }
+  }
+  return entry < -EPSILON || !normal ? null : { time: Math.max(0, entry), normal, direction };
+}
+
+function sweptBounds(shape, start, change, limit) {
+  return {
+    shape,
+    min: start.map((coordinate, axis) => Math.min(coordinate, coordinate + change[axis] * limit) + shape.min[axis]),
+    max: start.map((coordinate, axis) => Math.max(coordinate, coordinate + change[axis] * limit) + shape.max[axis]),
+  };
+}
+
+function intersectsBounds(triangle, min, max) {
+  for (let axis = 0; axis < 3; axis += 1) {
+    if (min[axis] > triangle.max[axis] + EPSILON || max[axis] < triangle.min[axis] - EPSILON) return false;
+  }
+  return true;
+}
+
+function cast(mesh, point, motion, limit, accept, segments, walkableFaces = false) {
   const start = toLocal(mesh, point);
   const change = toLocalMotion(mesh, motion);
   const { extent } = mesh;
-  const min = start.map((coordinate, axis) => Math.min(coordinate, coordinate + change[axis] * limit) - (axis === 1 ? 0 : extent[axis]));
-  const max = start.map((coordinate, axis) => Math.max(coordinate, coordinate + change[axis] * limit) + extent[axis]);
+  const shapes = segments?.map((segment) => sweptBounds(compileSegment(mesh, segment), start, change, limit));
+  const envelope = shapes ? bounds(shapes) : sweptBounds({
+    min: [-extent[0], 0, -extent[2]], max: extent,
+  }, start, change, limit);
   let hit = null;
-  visit(mesh.tree, min, max, (triangle) => {
-    const next = triangleContact(triangle, start, change, extent, hit?.time ?? limit);
-    if (!next) return false;
+
+  const consider = (next, segment) => {
+    if (!next) return;
     const normal = worldNormal(mesh, next.normal, next.direction);
-    if (upwardOnly && normal.y <= EPSILON) return false;
-    if (!hit || next.time < hit.time || normal.y > hit.normal.y) hit = { time: next.time, normal };
+    if (accept && !accept(normal, segment)) return;
+    if (!hit || next.time < hit.time || (next.time === hit.time && normal.y > hit.normal.y)) {
+      hit = segment ? { time: next.time, normal, segment } : { time: next.time, normal };
+    }
+  };
+  visit(mesh.tree, envelope.min, envelope.max, (triangle) => {
+    if (walkableFaces && triangle.normal[1] <= EPSILON) return false;
+    if (shapes) {
+      for (const { shape, min, max } of shapes) {
+        if (!intersectsBounds(triangle, min, max)) continue;
+        consider(convexContact(triangle, start, change, shape, hit?.time ?? limit), shape.segment);
+      }
+    } else {
+      consider(triangleContact(triangle, start, change, extent, hit?.time ?? limit));
+    }
     return false;
   });
   return hit;
 }
 
-export function sweepMesh(mesh, point, motion, limit = 1) {
-  return cast(mesh, point, motion, limit, false);
+export function sweepMesh(mesh, point, motion, limit = 1, segments, accept) {
+  return cast(mesh, point, motion, limit, accept, segments);
 }
 
-export function meshSupport(mesh, player, maxGap = 1e-6) {
-  const point = { ...player, y: player.y + SURFACE_NUDGE };
-  const motion = { x: 0, y: -Math.max(maxGap, 0) - 2 * SURFACE_NUDGE, z: 0 };
-  const hit = cast(mesh, point, motion, 1, true);
+export function meshSupport(mesh, player, maxDrop = 1e-6, segments, maxRise = 0) {
+  const rise = Math.max(maxRise, 0);
+  const point = { x: player.x, y: player.y + rise + SURFACE_NUDGE, z: player.z };
+  const motion = { x: 0, y: -Math.max(maxDrop, 0) - rise - 2 * SURFACE_NUDGE, z: 0 };
+  const hit = cast(mesh, point, motion, 1, (normal) => normal.y > EPSILON, segments, Boolean(segments));
   return hit ? point.y + motion.y * hit.time : null;
 }
 
@@ -204,15 +359,15 @@ export function meshSurface(mesh, x, z, ceiling = Infinity) {
   return top === -Infinity ? null : mesh.bottom + top * mesh.h;
 }
 
-function clipsBody(triangle, min, max) {
+function clipsPlanes(triangle, planes) {
   let polygon = triangle.vertices;
-  for (let axis = 0; axis < 3; axis += 1) {
-    for (const [boundary, side] of [[min[axis], 1], [max[axis], -1]]) {
+  for (const { axis, low, high } of planes) {
+    for (const [boundary, side] of [[low, 1], [high, -1]]) {
       const clipped = [];
       let previous = polygon.at(-1);
       for (const point of polygon) {
-        const from = (previous[axis] - boundary) * side;
-        const to = (point[axis] - boundary) * side;
+        const from = (dot(previous, axis) - boundary) * side;
+        const to = (dot(point, axis) - boundary) * side;
         if ((from < 0) !== (to < 0)) {
           const fraction = from / (from - to);
           clipped.push(previous.map((coordinate, dimension) => coordinate + (point[dimension] - coordinate) * fraction));
@@ -228,12 +383,25 @@ function clipsBody(triangle, min, max) {
     Math.hypot(...cross(difference(polygon[index + 1], polygon[0]), difference(point, polygon[0]))) > EPSILON * EPSILON);
 }
 
-export function meshIntersectsBody(mesh, player, inset = .001) {
+export function meshIntersectsBody(mesh, player, inset = .001, segments) {
   const point = toLocal(mesh, player);
+  if (segments) {
+    const shapes = segments.map((segment) => sweptBounds(compileSegment(mesh, segment), point, [0, 0, 0], 0));
+    const envelope = bounds(shapes);
+    return visit(mesh.tree, envelope.min, envelope.max, (triangle) => shapes.some((entry) => {
+      if (!intersectsBounds(triangle, entry.min, entry.max)) return false;
+      entry.planes ??= entry.shape.faces.map(({ axis, low, high, units }) => {
+        const offset = dot(point, axis);
+        return { axis, low: low + offset + inset * units, high: high + offset - inset * units };
+      });
+      return clipsPlanes(triangle, entry.planes);
+    }));
+  }
   const { extent } = mesh;
   const safety = mesh.quarterTurn ? [inset / mesh.d, inset / mesh.h, inset / mesh.w] :
     [inset / mesh.w, inset / mesh.h, inset / mesh.d];
   const min = point.map((coordinate, axis) => coordinate - (axis === 1 ? 0 : extent[axis]) + safety[axis]);
   const max = point.map((coordinate, axis) => coordinate + extent[axis] - safety[axis]);
-  return visit(mesh.tree, min, max, (triangle) => clipsBody(triangle, min, max));
+  const planes = AXES.map((axis, slot) => ({ axis, low: min[slot], high: max[slot] }));
+  return visit(mesh.tree, min, max, (triangle) => clipsPlanes(triangle, planes));
 }

@@ -1,4 +1,6 @@
-import { buildMeshCollider, meshSurface, meshSupport, sweepMesh } from "./mesh-collision.mjs";
+import { buildMeshCollider, meshIntersectsBody, meshSurface, meshSupport, sweepMesh } from "./mesh-collision.mjs";
+import { createClimberPose, advanceClimberPose } from "./climber-pose.mjs";
+import { HIKER_HEIGHT } from "./hiker-contact.mjs";
 import { levels } from "./levels.mjs";
 export { LEVEL_COUNT, levels } from "./levels.mjs";
 
@@ -6,7 +8,7 @@ export const WIDTH = 1120;
 export const HEIGHT = 720;
 export const DEPTH = 1100;
 export const PLAYER_WIDTH = 26;
-export const PLAYER_HEIGHT = 43;
+export const PLAYER_HEIGHT = HIKER_HEIGHT;
 export const PLAYER_DEPTH = 26;
 
 
@@ -129,7 +131,7 @@ export function respawn(game) {
   const { spawn, platforms: route } = game.level;
   game.lastPlatform = route[0];
   Object.assign(game.player, {
-    ...spawn, vx: 0, vy: 0, vz: 0, grounded: route[0], coyote: 0, jumpBuffer: 0, jumpHeld: false,
+    ...spawn, pose: createClimberPose(Math.atan2(route[1]?.x + route[1]?.w / 2 - spawn.x, route[1]?.z + route[1]?.d / 2 - spawn.z) || 0), vx: 0, vy: 0, vz: 0, grounded: route[0], coyote: 0, jumpBuffer: 0, jumpHeld: false,
   });
 }
 
@@ -232,7 +234,7 @@ function land(game, platform, height) {
 const axes = ["x", "y", "z"];
 const rampAxes = [...axes, "slope"];
 const epsilon = 1e-7;
-const maxStep = 18;
+const maxStep = 20;
 const noMovement = { x: 0, y: 0, z: 0 };
 const levelSolids = new WeakMap();
 
@@ -287,11 +289,37 @@ function solidShape(shape) {
   };
 }
 
+const terrainMeshes = new Map();
+const prismFaces = Uint16Array.of(0, 1, 2, 0, 2, 3, 7, 6, 5, 7, 5, 4,
+  4, 5, 1, 4, 1, 0, 5, 6, 2, 5, 2, 1, 6, 7, 3, 6, 3, 2, 7, 4, 0, 7, 0, 3);
+
+export function terrainCollisionShape(platform) {
+  if (platform.mesh || platform.designSeed === undefined || platform.footprint) return platform;
+  const { thickness, slope } = platform;
+  const rise = Math.abs(slope?.rise ?? 0);
+  const key = slope ? `${slope.axis}:${slope.rise}:${thickness}` : "deck";
+  if (!terrainMeshes.has(key)) {
+    const vertices = [[0, 0], [0, 1], [1, 1], [1, 0]];
+    const total = thickness + rise;
+    const top = vertices.map(([x, z]) => {
+      const t = slope?.axis === "x" ? x : z;
+      return (thickness + (slope?.rise < 0 ? 1 - t : t) * rise) / total;
+    });
+    const positions = [top, top.map((height) => height - thickness / total)].flatMap((heights) =>
+      vertices.flatMap(([x, z], index) => [x, heights[index], z]));
+    terrainMeshes.set(key, { positions: Float32Array.from(positions), indices: prismFaces });
+  }
+  return { ...platform, y: platform.y + rise, thickness: thickness + rise, mesh: terrainMeshes.get(key) };
+}
+
 function solidPlatform(platform) {
+  const collisionShape = terrainCollisionShape(platform);
   return {
     ...solidShape(platform),
     platform,
-    mesh: colliderFor(platform),
+    mesh: colliderFor(collisionShape),
+    meshTopOffset: collisionShape.y - platform.y,
+    posed: platform.designSeed !== undefined,
     end: platform,
     offset: noMovement,
     delta: noMovement,
@@ -311,10 +339,15 @@ function solidsForStep(level, from, to) {
   });
 }
 
-function firstContact(player, motion, groups, elapsed) {
+function contactWithClimber(normal, segment) {
+  return segment.boot || normal.y <= .18;
+}
+
+function firstContact(player, motion, groups, elapsed, tread) {
   let hit;
   const remaining = 1 - elapsed;
   for (const group of groups) {
+    if (group === tread) continue;
     const { offset, delta } = group;
     const startX = player.x - offset.x - delta.x * elapsed;
     const startY = player.y - offset.y - delta.y * elapsed;
@@ -322,16 +355,17 @@ function firstContact(player, motion, groups, elapsed) {
     const dx = motion.x - delta.x * remaining;
     const dy = motion.y - delta.y * remaining;
     const dz = motion.z - delta.z * remaining;
-    if (Math.max(startY, startY + dy) < group.min.y || Math.min(startY, startY + dy) > group.max.y ||
-      Math.max(startX, startX + dx) < group.min.x || Math.min(startX, startX + dx) > group.max.x ||
-      Math.max(startZ, startZ + dz) < group.min.z || Math.min(startZ, startZ + dz) > group.max.z) continue;
+    const extraReach = group.posed ? 12 : 0;
+    if (Math.max(startY, startY + dy) < group.min.y - extraReach || Math.min(startY, startY + dy) > group.max.y + extraReach ||
+      Math.max(startX, startX + dx) < group.min.x - extraReach || Math.min(startX, startX + dx) > group.max.x + extraReach ||
+      Math.max(startZ, startZ + dz) < group.min.z - extraReach || Math.min(startZ, startZ + dz) > group.max.z + extraReach) continue;
 
     const start = { x: startX, y: startY, z: startZ };
     const travel = { x: dx, y: dy, z: dz };
     if (group.mesh) {
       const contact = sweepMesh(group.mesh, {
-        x: startX - group.platform.x, y: startY - group.platform.y, z: startZ - group.platform.z,
-      }, travel);
+        x: startX - group.platform.x, y: startY - group.platform.y - group.meshTopOffset, z: startZ - group.platform.z,
+      }, travel, hit?.time ?? 1, group.posed ? player.pose.segments : undefined, group.posed ? contactWithClimber : undefined);
       if (contact && (!hit || contact.time < hit.time)) hit = { ...contact, group };
       continue;
     }
@@ -382,23 +416,30 @@ function isWalkway(platform) {
 
 function stepOntoMesh(player, motion, group, solids, elapsed) {
   if (!player.grounded || Math.hypot(motion.x, motion.z) < epsilon) return false;
-  if (player.grounded !== group.platform && !isWalkway(player.grounded)) return false;
+  if (player.grounded !== group.platform && !isWalkway(player.grounded) && !isWalkway(group.platform)) return false;
 
   const { platform, offset, delta } = group;
   const current = {
     x: platform.x + offset.x + delta.x * elapsed,
-    y: platform.y + offset.y + delta.y * elapsed,
+    y: platform.y + group.meshTopOffset + offset.y + delta.y * elapsed,
     z: platform.z + offset.z + delta.z * elapsed,
   };
+  const lookAhead = group.posed ? Math.max(1, 6 / Math.hypot(motion.x, motion.z)) : 1;
   const rise = meshSupport(group.mesh, {
-    x: player.x + motion.x - group.end.x,
+    x: player.x + motion.x * lookAhead - group.end.x,
     y: player.y + maxStep - current.y,
-    z: player.z + motion.z - group.end.z,
-  }, maxStep);
+    z: player.z + motion.z * lookAhead - group.end.z,
+  }, maxStep, group.posed ? player.pose.boots : undefined);
   const height = rise === null ? 0 : rise + current.y - player.y;
-  if (height <= epsilon || height > maxStep || firstContact(player, { ...noMovement, y: height }, solids, elapsed)) return false;
+  if (height <= epsilon || height > maxStep) return false;
+  // Clear the side we just touched before tracing the short upward step.
+  const retreat = .08 / Math.hypot(motion.x, motion.z);
+  const feet = { ...player, x: player.x - motion.x * retreat, z: player.z - motion.z * retreat };
+  if (firstContact(feet, { ...noMovement, y: height }, solids, elapsed, group)) return false;
 
+  player.x = feet.x;
   player.y += height;
+  player.z = feet.z;
   return true;
 }
 
@@ -416,10 +457,18 @@ function movePlayer(player, motion, solids) {
     if (!hit) break;
     const { axis, group, solid, normal } = hit;
     if (normal) {
-      if (normal.y >= 0 && normal.y < .82 && stepOntoMesh(player, motion, group, solids, elapsed)) continue;
+      if (normal.y > -.5 && normal.y < .82 && stepOntoMesh(player, motion, group, solids, elapsed)) continue;
       const remaining = 1 - elapsed;
-      const alongNormal = axes.reduce((sum, key) => sum + normal[key] * (motion[key] - group.delta[key] * remaining), 0);
-      for (const key of axes) motion[key] -= normal[key] * Math.min(0, alongNormal);
+      // Falling into the very edge of a sole is a landing, not a sideways kick.
+      const verticalCarry = group.delta.y * remaining;
+      if ((normal.y >= .45 && motion.y < verticalCarry) || (normal.y <= -.45 && motion.y > verticalCarry)) motion.y = verticalCarry;
+      const horizontalLength = Math.hypot(normal.x, normal.z);
+      // A near-vertical face should slide sideways without injecting a fall into the floor.
+      const slide = player.grounded && Math.abs(normal.y) < .12
+        ? { x: normal.x / horizontalLength, y: 0, z: normal.z / horizontalLength }
+        : normal;
+      const alongNormal = axes.reduce((sum, key) => sum + slide[key] * (motion[key] - group.delta[key] * remaining), 0);
+      for (const key of axes) motion[key] -= slide[key] * Math.min(0, alongNormal);
       if (normal.y >= .45 && player.vy <= 0) {
         player.vy = 0;
       } else if (normal.y <= -.45 && player.vy > 0) {
@@ -459,8 +508,67 @@ function movePlayer(player, motion, solids) {
   }
 }
 
+function groundedStepHeight(player, motion, solids) {
+  if (!player.grounded || Math.hypot(motion.x, motion.z) < .05) return 0;
+  const x = player.x + motion.x, z = player.z + motion.z;
+  const y = player.y + motion.y;
+  let rise = 0, tread;
+  for (const group of solids) {
+    if (!group.posed || !group.mesh ||
+      (player.grounded !== group.platform && !isWalkway(player.grounded) && !isWalkway(group.platform))) continue;
+    const { end, meshTopOffset } = group;
+    if (x < end.x - 24 || x > end.x + end.w + 24 || z < end.z - 24 || z > end.z + end.d + 24) continue;
+    const meshY = end.y + meshTopOffset;
+    if (y > meshY + maxStep || y < end.y - end.thickness - maxStep) continue;
+    const top = meshSupport(group.mesh, { x: x - end.x, y: y - meshY, z: z - end.z }, 0, player.pose.boots, maxStep);
+    if (top !== null && top + meshY - y > rise) {
+      rise = top + meshY - y;
+      tread = group;
+    }
+  }
+  if (rise <= epsilon || rise > maxStep) return 0;
+  const ceiling = firstContact(player, { ...noMovement, y: rise }, solids, 0, tread);
+  return ceiling ? 0 : rise;
+}
+
+function updateClimberContact(player, dt, solids, jumped) {
+  const previous = { ...player.pose };
+  advanceClimberPose(player, dt, false, jumped);
+  const proposed = player.pose;
+  if (proposed.segments === previous.segments) return;
+
+  const nearby = [];
+  for (const group of solids) {
+    if (!group.posed || !group.mesh) continue;
+    const { platform, offset, meshTopOffset, mesh } = group;
+    const x = player.x - offset.x, y = player.y - offset.y, z = player.z - offset.z;
+    if (x < group.min.x - 8 || x > group.max.x + 8 || z < group.min.z - 8 || z > group.max.z + 8 ||
+      y < group.min.y - 8 || y > group.max.y + maxStep) continue;
+    nearby.push({ group, mesh, point: { x: x - platform.x, y: y - platform.y - meshTopOffset, z: z - platform.z } });
+  }
+  const intersects = ({ mesh, point }, rise = 0) =>
+    meshIntersectsBody(mesh, { ...point, y: point.y + rise }, .0002, proposed.boots);
+  const conflict = nearby.find((entry) => intersects(entry));
+  if (!conflict) return;
+
+  player.pose = previous;
+  if (!player.grounded) return;
+  const { group, mesh, point } = conflict;
+  const top = meshSupport(mesh, point, 0, proposed.boots, maxStep);
+  const rise = top === null ? 0 : top - point.y;
+  if (rise <= epsilon || rise > maxStep ||
+    firstContact(player, { ...noMovement, y: rise }, solids, 0, group) ||
+    nearby.some((entry) => intersects(entry, rise))) return;
+  player.pose = proposed;
+  player.y += rise;
+}
+
 export function step(game, input, dt) {
-  if (game.levelComplete || dt <= 0) return;
+  if (dt <= 0) return;
+  if (game.levelComplete) {
+    if (game.won) advanceClimberPose(game.player, dt, true);
+    return;
+  }
   const { player, effects, effectPower, level } = game;
   const { goal: flag } = level;
   const previousTime = game.time;
@@ -506,7 +614,8 @@ export function step(game, input, dt) {
   player.coyote = grounded ? grace : Math.max(0, Math.min(grace, player.coyote - dt));
   player.jumpBuffer = effects.quiet ? 0 : input.jump && !player.jumpHeld ? .12 : Math.max(0, player.jumpBuffer - dt);
   player.jumpHeld = Boolean(input.jump);
-  if (!floating && ((player.coyote && player.jumpBuffer) || (grounded && effects.bounce))) {
+  const jumped = !floating && ((player.coyote && player.jumpBuffer) || (grounded && effects.bounce));
+  if (jumped) {
     const jumpPower = 588 + (boost ? 166 * effectPower.boost : 0);
     player.vy = jumpPower * (effects.bounce ? Math.sqrt(effectPower.bounce) : 1);
     player.grounded = null;
@@ -523,10 +632,12 @@ export function step(game, input, dt) {
     if (!floating && effects.glide) player.vy = Math.max(player.vy, -effectPower.glide);
   }
 
+  updateClimberContact(player, dt, frameSolids, jumped);
   const motion = { x: player.vx * dt + carry.x, y: player.vy * dt + carry.y, z: player.vz * dt + carry.z };
-  if (player.grounded?.slope) {
+  if (player.grounded?.slope && !carrier.mesh) {
     motion.y += supportHeight(carrier.end, { x: player.x + motion.x, z: player.z + motion.z }) - player.y;
   }
+  player.y += groundedStepHeight(player, motion, frameSolids);
   movePlayer(player, motion, frameSolids);
 
   if (player.x < halfWidth || player.x > WIDTH - halfWidth) {
@@ -550,15 +661,18 @@ export function step(game, input, dt) {
       if (player.y < group.min.y + offsetY - epsilon || player.y > group.max.y + offsetY + maxStep) continue;
       const x = player.x - group.end.x + group.platform.x;
       const z = player.z - group.end.z + group.platform.z;
-      if (!overPlatform(x, z, group)) continue;
+      if (!group.posed && !overPlatform(x, z, group)) continue;
+      if (group.posed && (x < group.min.x - 12 || x > group.max.x + 12 || z < group.min.z - 12 || z > group.max.z + 12)) continue;
       const walkingDown = player.grounded && carrier && (isWalkway(carrier.platform) || isWalkway(group.platform) || (carrier === group && group.mesh));
       if (group.mesh) {
+        const meshY = group.end.y + group.meshTopOffset;
+        const poseLift = group.posed && player.grounded ? 1.5 : 0;
         const height = meshSupport(group.mesh, {
-          x: x - group.platform.x, y: player.y - group.end.y, z: z - group.platform.z,
-        }, walkingDown ? maxStep : .002);
-        if (height !== null && height + group.end.y >= top) {
+          x: x - group.platform.x, y: player.y + poseLift - meshY, z: z - group.platform.z,
+        }, (walkingDown ? maxStep : .002) + poseLift, group.posed ? player.pose.boots : undefined);
+        if (height !== null && height + meshY >= top) {
           support = group;
-          top = height + group.end.y;
+          top = height + meshY;
         }
         continue;
       }
